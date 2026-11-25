@@ -1,4 +1,4 @@
-"""Anime Details view with glass cards, poster, KYOTO Player info, and in-app playback."""
+"""Anime Details view with clean glassmorphism hero, badges, and playback actions."""
 
 from __future__ import annotations
 
@@ -19,17 +19,21 @@ from PySide6.QtWidgets import (
 from anilab_desktop.models.catalog import AnimeDetails
 from anilab_desktop.playback.launcher import (
     LaunchResult,
-    format_player_launch_summary,
     is_direct_media_url,
     launch_in_vlc,
     open_url,
 )
 
-from .widgets import PosterLoader, SmoothScrollArea, rounded_pixmap
+from .widgets import (
+    PosterLoader,
+    SmoothScrollArea,
+    apply_glass_shadow,
+    rounded_pixmap,
+)
 
 
 class DetailsView(QWidget):
-    """Displays AnimeDetails, KYOTO Player launchExtras, and in-app/browser/VLC actions."""
+    """Displays AnimeDetails, watch progress badges, and playback/provider actions."""
 
     back_requested = Signal()
     providers_page_requested = Signal(int, str)
@@ -49,16 +53,18 @@ class DetailsView(QWidget):
         self._last_watched: str | None = None
 
         outer = QVBoxLayout(self)
-        outer.setSpacing(10)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(12)
 
         top_bar = QFrame()
         top_bar.setObjectName("GlassPanel")
+        apply_glass_shadow(top_bar, blur=20, alpha=95)
         top = QHBoxLayout(top_bar)
         top.setContentsMargins(14, 10, 14, 10)
         back_btn = QPushButton("← Back")
         back_btn.clicked.connect(self.back_requested.emit)
         self._title = QLabel("Anime Details")
-        self._title.setStyleSheet("font-size: 17px; font-weight: 700; color: #ffffff;")
+        self._title.setStyleSheet("font-size: 18px; font-weight: 700; color: #ffffff;")
         top.addWidget(back_btn)
         top.addWidget(self._title, stretch=1)
         outer.addWidget(top_bar)
@@ -66,16 +72,18 @@ class DetailsView(QWidget):
         scroll = SmoothScrollArea()
         content = QWidget()
         layout = QVBoxLayout(content)
-        layout.setSpacing(12)
+        layout.setContentsMargins(2, 2, 2, 2)
+        layout.setSpacing(14)
 
         hero = QFrame()
         hero.setObjectName("GlassPanel")
+        apply_glass_shadow(hero, blur=24, alpha=105)
         hero_layout = QHBoxLayout(hero)
-        hero_layout.setContentsMargins(16, 16, 16, 16)
-        hero_layout.setSpacing(16)
+        hero_layout.setContentsMargins(18, 18, 18, 18)
+        hero_layout.setSpacing(18)
 
         self._poster = QLabel("No Poster")
-        self._poster.setFixedSize(180, 250)
+        self._poster.setFixedSize(188, 262)
         self._poster.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._poster.setStyleSheet(
             "background-color: rgba(255,255,255,0.05); border-radius: 12px;"
@@ -83,41 +91,33 @@ class DetailsView(QWidget):
         hero_layout.addWidget(self._poster)
 
         info_col = QVBoxLayout()
-        self._meta = QLabel("")
-        self._meta.setWordWrap(True)
-        self._meta.setStyleSheet("color: #c4b5fd; font-weight: 600;")
-        info_col.addWidget(self._meta)
+        info_col.setSpacing(10)
+
+        self._badges_layout = QHBoxLayout()
+        self._badges_layout.setSpacing(6)
+        info_col.addLayout(self._badges_layout)
 
         self._synopsis = QTextEdit()
         self._synopsis.setReadOnly(True)
-        self._synopsis.setMinimumHeight(170)
+        self._synopsis.setMinimumHeight(190)
         info_col.addWidget(self._synopsis, stretch=1)
         hero_layout.addLayout(info_col, stretch=1)
         layout.addWidget(hero)
 
-        kyoto_card = QFrame()
-        kyoto_card.setObjectName("GlassPanel")
-        kl = QVBoxLayout(kyoto_card)
-        kl.setContentsMargins(16, 12, 16, 12)
-        k_hdr = QLabel("KYOTO Player Launch Info (Android Intent)")
-        k_hdr.setStyleSheet("font-weight: 700; color: #93c5fd;")
-        kl.addWidget(k_hdr)
-        self._launch_info = QTextEdit()
-        self._launch_info.setReadOnly(True)
-        self._launch_info.setFixedHeight(145)
-        kl.addWidget(self._launch_info)
-        layout.addWidget(kyoto_card)
-
         actions_card = QFrame()
         actions_card.setObjectName("GlassPanel")
+        apply_glass_shadow(actions_card, blur=20, alpha=95)
         al = QVBoxLayout(actions_card)
-        al.setContentsMargins(16, 12, 16, 12)
+        al.setContentsMargins(16, 14, 16, 14)
+        al.setSpacing(10)
+
         self._actions = QHBoxLayout()
         self._actions.setSpacing(8)
         al.addLayout(self._actions)
+
         self._status = QLabel("")
         self._status.setWordWrap(True)
-        self._status.setStyleSheet("color: #a5b4fc;")
+        self._status.setStyleSheet("color: #c4b5fd;")
         al.addWidget(self._status)
         layout.addWidget(actions_card)
         layout.addStretch()
@@ -149,31 +149,46 @@ class DetailsView(QWidget):
         else:
             self._poster.setText("No Poster")
 
-        meta_parts = [
-            p
-            for p in [
-                details.type,
-                details.status,
-                f"★ {details.score}" if details.score else None,
-                f"{details.episodeCount} eps" if details.episodeCount else None,
-                details.premiered,
-                details.duration,
-                f"Last Watched: Ep {last_watched}" if last_watched else None,
-                f"useProvidersPage={details.useProvidersPage}",
-            ]
-            if p
-        ]
-        self._meta.setText("  •  ".join(meta_parts))
-        self._synopsis.setPlainText(details.synopsis or "(No synopsis)")
-        self._launch_info.setPlainText(
-            format_player_launch_summary(details.player, player_token=player_token)
-        )
+        self._rebuild_badges(details, last_watched)
+        self._synopsis.setPlainText(details.synopsis or "(No synopsis available)")
         self._status.setText("")
         self._rebuild_actions(details)
 
+    def _rebuild_badges(
+        self, details: AnimeDetails, last_watched: str | None
+    ) -> None:
+        while self._badges_layout.count():
+            item = self._badges_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        if details.score:
+            sb = QLabel(f"★ {details.score}")
+            sb.setObjectName("ScoreBadge")
+            self._badges_layout.addWidget(sb)
+
+        if last_watched:
+            wb = QLabel(f"Last Watched: Ep {last_watched}")
+            wb.setObjectName("WatchedBadge")
+            self._badges_layout.addWidget(wb)
+
+        for val in (
+            details.type,
+            details.status,
+            f"{details.episodeCount} eps" if details.episodeCount else None,
+            details.premiered,
+            details.duration,
+        ):
+            if val:
+                b = QLabel(val)
+                b.setObjectName("Badge")
+                self._badges_layout.addWidget(b)
+
+        self._badges_layout.addStretch()
+
     def _set_poster(self, pix: QPixmap) -> None:
         self._poster.setText("")
-        self._poster.setPixmap(rounded_pixmap(pix, QSize(180, 250), radius=12))
+        self._poster.setPixmap(rounded_pixmap(pix, QSize(188, 262), radius=12))
 
     def _report_result(self, result: LaunchResult) -> None:
         self._status.setText(result.message)
@@ -240,8 +255,7 @@ class DetailsView(QWidget):
         self._actions.addWidget(prov_combo)
 
         if details.useProvidersPage:
-            btn = QPushButton("Open Providers Page")
-            btn.setObjectName("PrimaryButton")
+            btn = QPushButton("Providers")
             btn.clicked.connect(
                 lambda: self.providers_page_requested.emit(
                     details.id, details.title
@@ -250,8 +264,7 @@ class DetailsView(QWidget):
             self._actions.addWidget(btn)
 
         if details.trailerUrl:
-            t_in = QPushButton("Watch Trailer (In-App)")
-            t_in.setObjectName("PrimaryButton")
+            t_in = QPushButton("Watch Trailer")
             t_in.clicked.connect(
                 lambda _=False, u=details.trailerUrl: self.in_app_play_requested.emit(
                     u or "", f"{details.title} — Trailer"
@@ -259,28 +272,14 @@ class DetailsView(QWidget):
             )
             self._actions.addWidget(t_in)
 
-            t_ext = QPushButton("Trailer (Browser)")
-            t_ext.clicked.connect(
-                lambda _=False, u=details.trailerUrl: self._report_result(
-                    open_url(u or "")
-                )
-            )
-            self._actions.addWidget(t_ext)
-
         for prov in details.providers:
-            p_in = QPushButton(f"{prov.name} (In-App)")
+            p_in = QPushButton(f"{prov.name}")
             p_in.clicked.connect(
                 lambda _=False, u=prov.url, n=prov.name: self.in_app_play_requested.emit(
                     u, f"{details.title} — {n}"
                 )
             )
             self._actions.addWidget(p_in)
-
-            p_ext = QPushButton(f"{prov.name} (Browser)")
-            p_ext.clicked.connect(
-                lambda _=False, u=prov.url: self._report_result(open_url(u))
-            )
-            self._actions.addWidget(p_ext)
 
             if is_direct_media_url(prov.url):
                 p_vlc = QPushButton(f"{prov.name} (VLC)")

@@ -1,4 +1,4 @@
-"""Main PySide6 window wiring AniMeloClient, LocalStore, glass views, and PlayerView."""
+"""Main PySide6 window with glassmorphism navigation shell and async workers."""
 
 from __future__ import annotations
 
@@ -9,13 +9,18 @@ from typing import Any
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
     QApplication,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
     QMainWindow,
     QMessageBox,
+    QPushButton,
     QStackedWidget,
-    QTabWidget,
+    QVBoxLayout,
+    QWidget,
 )
 
-from anilab_desktop.api.client import AniMeloClient
+from anilab_desktop.api.client import create_catalog_client
 from anilab_desktop.playback.launcher import launch_stream_result
 from anilab_desktop.playback.providers import (
     FallbackStreamProvider,
@@ -32,7 +37,7 @@ from .episodes_dialog import EpisodesDialog
 from .home_view import HomeView, SearchBrowseView
 from .player_view import PlayerView
 from .providers_dialog import ProvidersDialog
-from .widgets import APP_STYLESHEET, PosterLoader
+from .widgets import APP_STYLESHEET, PosterLoader, apply_glass_shadow
 
 
 class _Worker(QThread):
@@ -51,32 +56,62 @@ class _Worker(QThread):
 
 
 class MainWindow(QMainWindow):
-    """Top-level AniMelo Desktop window."""
+    """Top-level AniLab Desktop window."""
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("AniMelo Desktop")
-        self.resize(1060, 740)
+        self.setWindowTitle("AniLab Desktop")
+        self.resize(1100, 760)
         self.setStyleSheet(APP_STYLESHEET)
 
         self._store = LocalStore()
-        self._client = AniMeloClient(store=self._store)
+        self._client = create_catalog_client()
         self._poster_loader = PosterLoader(self)
         self._workers: list[_Worker] = []
 
-        self._stack = QStackedWidget()
-        self.setCentralWidget(self._stack)
+        root = QWidget()
+        root_layout = QVBoxLayout(root)
+        root_layout.setContentsMargins(14, 14, 14, 14)
+        root_layout.setSpacing(12)
+        self.setCentralWidget(root)
 
-        self._tabs = QTabWidget()
+        nav = QFrame()
+        nav.setObjectName("GlassNav")
+        apply_glass_shadow(nav, blur=22, alpha=105)
+        nav_layout = QHBoxLayout(nav)
+        nav_layout.setContentsMargins(16, 10, 16, 10)
+        nav_layout.setSpacing(10)
+
+        brand = QLabel("AniLab Desktop")
+        brand.setStyleSheet("font-size: 16px; font-weight: 700; color: #f9fafb;")
+        nav_layout.addWidget(brand)
+        nav_layout.addSpacing(12)
+
+        self._nav_home = QPushButton("Home")
+        self._nav_home.setObjectName("NavButton")
+        self._nav_home.setProperty("active", True)
+        self._nav_home.clicked.connect(lambda: self._switch_top_view("home"))
+
+        self._nav_search = QPushButton("Search / Browse")
+        self._nav_search.setObjectName("NavButton")
+        self._nav_search.setProperty("active", False)
+        self._nav_search.clicked.connect(lambda: self._switch_top_view("search"))
+
+        nav_layout.addWidget(self._nav_home)
+        nav_layout.addWidget(self._nav_search)
+        nav_layout.addStretch()
+        root_layout.addWidget(nav)
+
+        self._stack = QStackedWidget()
+        root_layout.addWidget(self._stack, stretch=1)
+
         self._home_view = HomeView(self._poster_loader)
         self._search_view = SearchBrowseView(self._poster_loader)
-        self._tabs.addTab(self._home_view, "Home")
-        self._tabs.addTab(self._search_view, "Search / Browse")
-
         self._details_view = DetailsView(self._poster_loader)
         self._player_view = PlayerView()
 
-        self._stack.addWidget(self._tabs)
+        self._stack.addWidget(self._home_view)
+        self._stack.addWidget(self._search_view)
         self._stack.addWidget(self._details_view)
         self._stack.addWidget(self._player_view)
 
@@ -86,7 +121,7 @@ class MainWindow(QMainWindow):
         self._search_view.browse_requested.connect(self._do_browse)
         self._search_view.anime_selected.connect(self._open_details)
         self._details_view.back_requested.connect(
-            lambda: self._stack.setCurrentWidget(self._tabs)
+            lambda: self._switch_top_view(self._last_top_view)
         )
         self._details_view.providers_page_requested.connect(self._open_providers)
         self._details_view.in_app_play_requested.connect(self._open_in_app_player)
@@ -98,15 +133,31 @@ class MainWindow(QMainWindow):
             lambda: self._stack.setCurrentWidget(self._details_view)
         )
 
+        self._last_top_view = "home"
         self._load_home()
 
+    def _switch_top_view(self, target: str) -> None:
+        self._last_top_view = target
+        is_home = target == "home"
+        self._nav_home.setProperty("active", is_home)
+        self._nav_search.setProperty("active", not is_home)
+        for btn in (self._nav_home, self._nav_search):
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+        self._stack.setCurrentWidget(
+            self._home_view if is_home else self._search_view
+        )
+
     def _run_async(
-        self, fn: Callable[[], Any], on_ok: Callable[[Any], None]
+        self,
+        fn: Callable[[], Any],
+        on_ok: Callable[[Any], None],
+        on_err: Callable[[str], None] | None = None,
     ) -> None:
         worker = _Worker(fn, self)
         self._workers.append(worker)
         worker.finished_ok.connect(on_ok)
-        worker.failed.connect(self._show_error)
+        worker.failed.connect(on_err or self._show_error)
         worker.finished.connect(lambda: self._workers.remove(worker))
         worker.start()
 
@@ -114,8 +165,14 @@ class MainWindow(QMainWindow):
         QMessageBox.warning(self, "API Error", msg)
 
     def _load_home(self) -> None:
-        self._home_view.set_status("Loading home...")
-        self._run_async(self._client.get_home, self._home_view.set_home)
+        self._home_view.set_status("Loading catalog from Jikan...")
+        self._run_async(
+            self._client.get_home,
+            self._home_view.set_home,
+            on_err=lambda msg: self._home_view.set_status(
+                f"Catalog unavailable (offline or rate-limited): {msg}"
+            ),
+        )
 
     def _do_search(self, query: str) -> None:
         self._run_async(
@@ -259,7 +316,7 @@ class MainWindow(QMainWindow):
                     msg = (
                         f"No episodes returned for '{title}' by {provider.name}.\n\n"
                         f"• Click 'Add / Update Stream' to save a stream to {self._store.get_streams_path()}, or\n"
-                        "• Set ANILAB_UPSTREAM_URL to a running Consumet/REST anime API before launching."
+                        "• Set ANILAB_UPSTREAM_URL to a running REST anime API before launching."
                     )
                 self._details_view.set_status_message(msg)
                 QMessageBox.information(self, "No Episodes Found", msg)

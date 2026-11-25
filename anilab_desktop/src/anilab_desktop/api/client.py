@@ -1,10 +1,8 @@
-"""Typed API client wrapping httpx.Client + AniMeloTransport."""
+"""Catalog client factory with automatic Jikan -> AniList fallback."""
 
 from __future__ import annotations
 
-from typing import Any
-
-import httpx
+import os
 
 from anilab_desktop.models.catalog import (
     AnimeDetails,
@@ -12,111 +10,87 @@ from anilab_desktop.models.catalog import (
     AnimeProvidersResponse,
     HomeResponse,
 )
-from anilab_desktop.models.config import AppConfigResponse
-from anilab_desktop.state.store import LocalStore
 
-from .transport import AniMeloTransport, BASE_URL
+from .anilist import AniListCatalogClient
+from .jikan import JIKAN_BASE_URL, JikanCatalogClient
 
 
-class AniMeloClient:
-    """High-level synchronous client for a configured catalog REST API."""
+class FallbackCatalogClient:
+    """Tries primary (Jikan v4) and automatically falls back to AniList GraphQL."""
 
     def __init__(
         self,
-        *,
-        store: LocalStore | None = None,
-        base_url: str | None = None,
-        timeout: float = 20.0,
-        transport: httpx.BaseTransport | None = None,
+        primary: JikanCatalogClient | None = None,
+        fallback: AniListCatalogClient | None = None,
     ) -> None:
-        self._store = store
-        token_provider = store.get_token if store is not None else None
-        self._transport = transport or AniMeloTransport(
-            token_provider=token_provider
-        )
-        resolved_base = (base_url if base_url is not None else BASE_URL).strip()
-        self._base_configured = bool(resolved_base)
-        self._client = httpx.Client(
-            transport=self._transport,
-            base_url=resolved_base or "http://127.0.0.1:8000/",
-            timeout=httpx.Timeout(timeout, connect=10.0),
-        )
-
-    def _ensure_configured(self) -> None:
-        if not self._base_configured and isinstance(self._transport, AniMeloTransport):
-            # Allow mocked transports in tests; require ANILAB_API_BASE_URL for live calls.
-            if type(self._transport._inner).__name__ == "HTTPTransport":
-                raise RuntimeError(
-                    "ANILAB_API_BASE_URL is not configured. "
-                    "Set ANILAB_API_BASE_URL before calling live catalog endpoints."
-                )
+        self._primary = primary or JikanCatalogClient()
+        self._fallback = fallback or AniListCatalogClient()
+        self._id_source: dict[int, str] = {}
 
     def close(self) -> None:
-        self._client.close()
+        self._primary.close()
+        self._fallback.close()
 
-    def __enter__(self) -> AniMeloClient:
+    def __enter__(self) -> FallbackCatalogClient:
         return self
 
     def __exit__(self, *args: object) -> None:
         self.close()
 
-    def get_config(self) -> AppConfigResponse:
-        resp = self._client.get("config")
-        resp.raise_for_status()
-        cfg = AppConfigResponse.model_validate(resp.json())
-        if self._store is not None and cfg.player is not None:
-            self._store.set_player_config(cfg.player)
-        return cfg
+    def _record_ids(self, items, source: str) -> None:
+        for item in items:
+            self._id_source[item.id] = source
 
     def get_home(self) -> HomeResponse:
-        self._ensure_configured()
-        resp = self._client.get("home")
-        resp.raise_for_status()
-        return HomeResponse.model_validate(resp.json())
-
-    def get_anime_details(self, anime_id: int) -> AnimeDetails:
-        resp = self._client.get(f"anime/{anime_id}")
-        resp.raise_for_status()
-        return AnimeDetails.model_validate(resp.json())
-
-    def get_anime_providers(self, anime_id: int) -> AnimeProvidersResponse:
-        resp = self._client.get(f"anime/{anime_id}/providers")
-        resp.raise_for_status()
-        return AnimeProvidersResponse.model_validate(resp.json())
+        try:
+            res = self._primary.get_home()
+            self._record_ids(res.spotlight, "primary")
+            for lst in res.sections.values():
+                self._record_ids(lst, "primary")
+            return res
+        except Exception:
+            res = self._fallback.get_home()
+            self._record_ids(res.spotlight, "fallback")
+            for lst in res.sections.values():
+                self._record_ids(lst, "fallback")
+            return res
 
     def search(self, query: str, page: int = 1) -> AnimeListResponse:
-        resp = self._client.get(
-            "search", params={"query": query, "page": page}
-        )
-        resp.raise_for_status()
-        return AnimeListResponse.model_validate(resp.json())
+        try:
+            res = self._primary.search(query, page=page)
+            self._record_ids(res.data, "primary")
+            return res
+        except Exception:
+            res = self._fallback.search(query, page=page)
+            self._record_ids(res.data, "fallback")
+            return res
 
-    def browse(
-        self, page: int = 1, filters: dict[str, str] | None = None
-    ) -> AnimeListResponse:
-        params: dict[str, Any] = {"page": page}
-        if filters:
-            params.update(filters)
-        resp = self._client.get("browse", params=params)
-        resp.raise_for_status()
-        return AnimeListResponse.model_validate(resp.json())
+    def browse(self, page: int = 1) -> AnimeListResponse:
+        try:
+            res = self._primary.browse(page=page)
+            self._record_ids(res.data, "primary")
+            return res
+        except Exception:
+            res = self._fallback.browse(page=page)
+            self._record_ids(res.data, "fallback")
+            return res
 
-    def get_section(self, section: str, page: int = 1) -> AnimeListResponse:
-        resp = self._client.get(f"sections/{section}", params={"page": page})
-        resp.raise_for_status()
-        return AnimeListResponse.model_validate(resp.json())
+    def get_anime_details(self, anime_id: int) -> AnimeDetails:
+        src = self._id_source.get(anime_id)
+        if src == "fallback":
+            return self._fallback.get_anime_details(anime_id)
+        try:
+            return self._primary.get_anime_details(anime_id)
+        except Exception:
+            return self._fallback.get_anime_details(anime_id)
 
-    def get_rankings(self) -> dict[str, Any]:
-        resp = self._client.get("rankings")
-        resp.raise_for_status()
-        return resp.json()
+    def get_anime_providers(self, anime_id: int) -> AnimeProvidersResponse:
+        return AnimeProvidersResponse(title=None, providers=[])
 
-    def get_schedule(
-        self, date: str, offset: int = 0, timezone: str = "UTC"
-    ) -> dict[str, Any]:
-        resp = self._client.get(
-            "schedule",
-            params={"date": date, "offset": offset, "timezone": timezone},
-        )
-        resp.raise_for_status()
-        return resp.json()
+
+def create_catalog_client() -> FallbackCatalogClient:
+    """Create a FallbackCatalogClient (Jikan v4 primary -> AniList GraphQL fallback)."""
+    override = os.environ.get("ANILAB_API_BASE_URL", "").strip()
+    primary = JikanCatalogClient(base_url=override or JIKAN_BASE_URL)
+    fallback = AniListCatalogClient()
+    return FallbackCatalogClient(primary=primary, fallback=fallback)

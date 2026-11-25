@@ -1,4 +1,4 @@
-"""Shared glass-morphism styling, smooth scrolling, image loader, and animated AnimeCard."""
+"""Shared glassmorphism styling, smooth scrolling, image loader, and animated AnimeCard."""
 
 from __future__ import annotations
 
@@ -34,9 +34,9 @@ APP_STYLESHEET = """
 QMainWindow, QDialog {
     background: qlineargradient(
         x1: 0, y1: 0, x2: 1, y2: 1,
-        stop: 0 #090d16,
-        stop: 0.55 #101728,
-        stop: 1 #0b1120
+        stop: 0 #070b14,
+        stop: 0.45 #0f172a,
+        stop: 1 #131129
     );
     color: #e5e7eb;
     font-family: "Segoe UI", "Inter", sans-serif;
@@ -48,15 +48,38 @@ QWidget {
     background: transparent;
 }
 
+QFrame#GlassNav {
+    background-color: rgba(17, 24, 39, 0.68);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 16px;
+}
+
+QFrame#GlassPanel {
+    background-color: rgba(20, 27, 45, 0.66);
+    border: 1px solid rgba(255, 255, 255, 0.13);
+    border-radius: 16px;
+}
+
+QFrame#AnimeCard {
+    background-color: rgba(24, 33, 56, 0.62);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 16px;
+}
+
+QFrame#AnimeCard[hovered="true"] {
+    background-color: rgba(36, 48, 82, 0.86);
+    border: 1px solid rgba(167, 139, 250, 0.78);
+}
+
 QTabWidget::pane {
     border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 14px;
-    background-color: rgba(17, 24, 39, 0.58);
+    border-radius: 16px;
+    background-color: rgba(15, 23, 42, 0.52);
     padding: 8px;
 }
 
 QTabBar::tab {
-    background-color: rgba(255, 255, 255, 0.05);
+    background-color: rgba(255, 255, 255, 0.06);
     color: #9ca3af;
     border: 1px solid rgba(255, 255, 255, 0.10);
     border-radius: 10px;
@@ -67,31 +90,14 @@ QTabBar::tab {
 }
 
 QTabBar::tab:selected {
-    background-color: rgba(124, 58, 237, 0.35);
+    background-color: rgba(124, 58, 237, 0.38);
     color: #ffffff;
-    border: 1px solid rgba(167, 139, 250, 0.55);
+    border: 1px solid rgba(167, 139, 250, 0.65);
 }
 
 QTabBar::tab:hover:!selected {
-    background-color: rgba(255, 255, 255, 0.10);
+    background-color: rgba(255, 255, 255, 0.11);
     color: #f3f4f6;
-}
-
-QFrame#GlassPanel {
-    background-color: rgba(22, 29, 48, 0.72);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 16px;
-}
-
-QFrame#AnimeCard {
-    background-color: rgba(24, 32, 52, 0.74);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 14px;
-}
-
-QFrame#AnimeCard[hovered="true"] {
-    background-color: rgba(34, 44, 72, 0.90);
-    border: 1px solid rgba(139, 92, 246, 0.75);
 }
 
 QPushButton {
@@ -104,40 +110,95 @@ QPushButton {
 }
 
 QPushButton:hover {
-    background-color: rgba(124, 58, 237, 0.42);
+    background-color: rgba(124, 58, 237, 0.40);
     border: 1px solid rgba(167, 139, 250, 0.65);
 }
 
 QPushButton:pressed {
-    background-color: rgba(109, 40, 217, 0.65);
+    background-color: rgba(109, 40, 217, 0.68);
 }
 
 QPushButton#PrimaryButton {
-    background-color: rgba(124, 58, 237, 0.75);
-    border: 1px solid rgba(196, 181, 253, 0.55);
+    background-color: rgba(124, 58, 237, 0.78);
+    border: 1px solid rgba(196, 181, 253, 0.58);
 }
 
 QPushButton#PrimaryButton:hover {
-    background-color: rgba(139, 92, 246, 0.92);
+    background-color: rgba(139, 92, 246, 0.94);
+}
+
+QPushButton#NavButton {
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    padding: 7px 14px;
+    color: #9ca3af;
+}
+
+QPushButton#NavButton[active="true"] {
+    background-color: rgba(124, 58, 237, 0.36);
+    border: 1px solid rgba(167, 139, 250, 0.58);
+    color: #ffffff;
+}
+
+QPushButton#NavButton:hover:!active {
+    background-color: rgba(255, 255, 255, 0.08);
+    color: #f3f4f6;
+}
+
+QComboBox {
+    background-color: rgba(15, 23, 42, 0.78);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 10px;
+    padding: 6px 12px;
+    color: #f3f4f6;
+    font-weight: 600;
+}
+
+QComboBox::drop-down {
+    border: none;
+    width: 22px;
+}
+
+QComboBox QAbstractItemView {
+    background-color: #111827;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    selection-background-color: rgba(124, 58, 237, 0.55);
+    color: #f9fafb;
 }
 
 QLineEdit, QTextEdit, QListWidget {
-    background-color: rgba(15, 21, 36, 0.78);
+    background-color: rgba(15, 23, 42, 0.74);
     border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 12px;
     padding: 8px 12px;
     color: #f3f4f6;
 }
 
-QLineEdit:focus {
-    border: 1px solid rgba(139, 92, 246, 0.75);
+QLineEdit:focus, QTextEdit:focus {
+    border: 1px solid rgba(167, 139, 250, 0.72);
+}
+
+QListWidget::item {
+    padding: 8px 10px;
+    border-radius: 8px;
+    margin: 2px 0px;
+}
+
+QListWidget::item:selected {
+    background-color: rgba(124, 58, 237, 0.42);
+    border: 1px solid rgba(167, 139, 250, 0.55);
+}
+
+QListWidget::item:hover:!selected {
+    background-color: rgba(255, 255, 255, 0.07);
 }
 
 QLabel#Badge {
-    background-color: rgba(255, 255, 255, 0.10);
+    background-color: rgba(255, 255, 255, 0.09);
     border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 7px;
-    padding: 2px 7px;
+    padding: 2px 8px;
     font-size: 11px;
     font-weight: 600;
     color: #d1d5db;
@@ -147,10 +208,20 @@ QLabel#ScoreBadge {
     background-color: rgba(245, 158, 11, 0.22);
     border: 1px solid rgba(251, 191, 36, 0.45);
     border-radius: 7px;
-    padding: 2px 7px;
+    padding: 2px 8px;
     font-size: 11px;
     font-weight: 700;
     color: #fde68a;
+}
+
+QLabel#WatchedBadge {
+    background-color: rgba(16, 185, 129, 0.20);
+    border: 1px solid rgba(52, 211, 153, 0.45);
+    border-radius: 7px;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #a7f3d0;
 }
 
 QScrollArea {
@@ -171,13 +242,24 @@ QScrollBar::handle:vertical {
 }
 
 QScrollBar::handle:vertical:hover {
-    background: rgba(139, 92, 246, 0.55);
+    background: rgba(167, 139, 250, 0.58);
 }
 
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
     height: 0px;
 }
 """
+
+
+def apply_glass_shadow(
+    widget: QWidget, *, blur: int = 24, alpha: int = 115
+) -> QGraphicsDropShadowEffect:
+    effect = QGraphicsDropShadowEffect(widget)
+    effect.setBlurRadius(blur)
+    effect.setOffset(0, 6)
+    effect.setColor(QColor(0, 0, 0, alpha))
+    widget.setGraphicsEffect(effect)
+    return effect
 
 
 class SmoothScrollArea(QScrollArea):
@@ -348,10 +430,10 @@ class AnimeCard(QFrame):
 
     clicked = Signal(int)
 
-    CARD_W = 184
-    CARD_H = 318
-    POSTER_W = 164
-    POSTER_H = 224
+    CARD_W = 188
+    CARD_H = 324
+    POSTER_W = 166
+    POSTER_H = 228
 
     def __init__(
         self,
@@ -367,26 +449,22 @@ class AnimeCard(QFrame):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
 
-        self._shadow = QGraphicsDropShadowEffect(self)
-        self._shadow.setBlurRadius(14)
-        self._shadow.setOffset(0, 4)
-        self._shadow.setColor(QColor(0, 0, 0, 110))
-        self.setGraphicsEffect(self._shadow)
+        self._shadow = apply_glass_shadow(self, blur=16, alpha=110)
 
         self._blur_anim = QPropertyAnimation(self._shadow, b"blurRadius", self)
         self._blur_anim.setDuration(160)
         self._blur_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(6)
+        layout.setContentsMargins(11, 11, 11, 11)
+        layout.setSpacing(7)
 
         self._poster = QLabel("Loading...")
         self._poster.setFixedSize(self.POSTER_W, self.POSTER_H)
         self._poster.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._poster.setStyleSheet(
             "background-color: rgba(255,255,255,0.05); "
-            "border-radius: 10px; color: #6b7280; font-size: 11px;"
+            "border-radius: 12px; color: #6b7280; font-size: 11px;"
         )
         layout.addWidget(self._poster)
 
@@ -420,17 +498,17 @@ class AnimeCard(QFrame):
     def _set_poster(self, pix: QPixmap) -> None:
         self._poster.setText("")
         self._poster.setPixmap(
-            rounded_pixmap(pix, QSize(self.POSTER_W, self.POSTER_H), radius=10)
+            rounded_pixmap(pix, QSize(self.POSTER_W, self.POSTER_H), radius=12)
         )
 
     def enterEvent(self, event) -> None:
         self.setProperty("hovered", True)
         self.style().unpolish(self)
         self.style().polish(self)
-        self._shadow.setColor(QColor(139, 92, 246, 150))
+        self._shadow.setColor(QColor(139, 92, 246, 155))
         self._blur_anim.stop()
         self._blur_anim.setStartValue(self._shadow.blurRadius())
-        self._blur_anim.setEndValue(28)
+        self._blur_anim.setEndValue(30)
         self._blur_anim.start()
         super().enterEvent(event)
 
@@ -441,7 +519,7 @@ class AnimeCard(QFrame):
         self._shadow.setColor(QColor(0, 0, 0, 110))
         self._blur_anim.stop()
         self._blur_anim.setStartValue(self._shadow.blurRadius())
-        self._blur_anim.setEndValue(14)
+        self._blur_anim.setEndValue(16)
         self._blur_anim.start()
         super().leaveEvent(event)
 

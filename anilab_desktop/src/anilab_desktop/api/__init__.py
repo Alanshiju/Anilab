@@ -1,20 +1,14 @@
-"""API client and wire-encryption layer."""
+"""Catalog API clients (Jikan v4 primary + AniList GraphQL fallback)."""
 
-from .crypto import (
-    DEFAULT_WIRE_SECRET,
-    MAX_DECOMPRESSED_BYTES,
-    WireCrypto,
-    canonical_request,
-    is_valid_nonce,
-)
-from .transport import AniMeloTransport, BASE_URL
+from .anilist import ANILIST_URL, AniListCatalogClient
+from .client import FallbackCatalogClient, create_catalog_client
+from .jikan import JIKAN_BASE_URL, JikanCatalogClient
 
 __all__ = [
-    "AniMeloTransport",
-    "BASE_URL",
-    "DEFAULT_WIRE_SECRET",
-    "MAX_DECOMPRESSED_BYTES",
-    "WireCrypto",
-    "canonical_request",
-    "is_valid_nonce",
+    "ANILIST_URL",
+    "AniListCatalogClient",
+    "FallbackCatalogClient",
+    "JIKAN_BASE_URL",
+    "JikanCatalogClient",
+    "create_catalog_client",
 ]
