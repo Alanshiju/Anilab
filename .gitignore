@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Build / distribution artifacts
+build/
+dist/
+*.spec
+
+# IDE / OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# APK & decompiled artifacts
+*.apk
+*.apkm
+*.xapk
+decompiled*/
+
+# Local user runtime & logs
+state.json
+streams.json
+*.log

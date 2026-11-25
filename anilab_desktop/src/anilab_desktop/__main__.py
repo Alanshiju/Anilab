@@ -1,0 +1,6 @@
+"""Entrypoint for `python -m anilab_desktop`."""
+
+from anilab_desktop.ui.main_window import run_app
+
+if __name__ == "__main__":
+    raise SystemExit(run_app())

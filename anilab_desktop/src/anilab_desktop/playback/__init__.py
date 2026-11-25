@@ -1,0 +1,49 @@
+"""Desktop playback and external link/player launcher."""
+
+from .launcher import (
+    COMMON_WINDOWS_VLC_PATHS,
+    DIRECT_MEDIA_EXTENSIONS,
+    LaunchResult,
+    build_vlc_command,
+    find_vlc_executable,
+    format_player_launch_summary,
+    is_direct_media_url,
+    launch_in_vlc,
+    launch_stream_result,
+    normalize_in_app_url,
+    open_desktop_player,
+    open_url,
+)
+from .providers import (
+    EpisodeInfo,
+    FallbackStreamProvider,
+    HttpJsonStreamProvider,
+    JsonStreamProvider,
+    ResolverCommandProvider,
+    StreamProvider,
+    StreamResult,
+    SubtitleTrack,
+)
+
+__all__ = [
+    "COMMON_WINDOWS_VLC_PATHS",
+    "DIRECT_MEDIA_EXTENSIONS",
+    "EpisodeInfo",
+    "FallbackStreamProvider",
+    "HttpJsonStreamProvider",
+    "JsonStreamProvider",
+    "LaunchResult",
+    "ResolverCommandProvider",
+    "StreamProvider",
+    "StreamResult",
+    "SubtitleTrack",
+    "build_vlc_command",
+    "find_vlc_executable",
+    "format_player_launch_summary",
+    "is_direct_media_url",
+    "launch_in_vlc",
+    "launch_stream_result",
+    "normalize_in_app_url",
+    "open_desktop_player",
+    "open_url",
+]
