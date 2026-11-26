@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
@@ -27,9 +27,59 @@ from anilab_desktop.playback.launcher import (
 from .widgets import (
     PosterLoader,
     SmoothScrollArea,
-    apply_glass_shadow,
     rounded_pixmap,
 )
+
+
+def _build_blurred_tint(pix: QPixmap) -> QPixmap:
+    """Create a soft blurred version of the poster for hero banner ambient tint."""
+    tiny = pix.scaled(
+        36,
+        36,
+        Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+    return tiny.scaled(
+        360,
+        240,
+        Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+
+
+class _HeroBannerFrame(QFrame):
+    """Glass hero card that paints a soft blurred poster tint underneath."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setObjectName("GlassPanel")
+        self._tint_pix = QPixmap()
+
+    def set_tint_pixmap(self, pix: QPixmap) -> None:
+        self._tint_pix = _build_blurred_tint(pix) if not pix.isNull() else QPixmap()
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        if not self._tint_pix.isNull():
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+            path = QPainterPath()
+            path.addRoundedRect(1, 1, self.width() - 2, self.height() - 2, 17, 17)
+            painter.setClipPath(path)
+            scaled = self._tint_pix.scaled(
+                self.size(),
+                Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            x = max(0, (scaled.width() - self.width()) // 2)
+            y = max(0, (scaled.height() - self.height()) // 2)
+            painter.setOpacity(0.32)
+            painter.drawPixmap(0, 0, scaled.copy(x, y, self.width(), self.height()))
+            painter.setOpacity(1.0)
+            painter.fillRect(self.rect(), QColor(18, 20, 32, 145))
+            painter.end()
+        super().paintEvent(event)
 
 
 class DetailsView(QWidget):
@@ -58,9 +108,8 @@ class DetailsView(QWidget):
 
         top_bar = QFrame()
         top_bar.setObjectName("GlassPanel")
-        apply_glass_shadow(top_bar, blur=20, alpha=95)
         top = QHBoxLayout(top_bar)
-        top.setContentsMargins(14, 10, 14, 10)
+        top.setContentsMargins(16, 10, 16, 10)
         back_btn = QPushButton("← Back")
         back_btn.clicked.connect(self.back_requested.emit)
         self._title = QLabel("Anime Details")
@@ -75,23 +124,21 @@ class DetailsView(QWidget):
         layout.setContentsMargins(2, 2, 2, 2)
         layout.setSpacing(14)
 
-        hero = QFrame()
-        hero.setObjectName("GlassPanel")
-        apply_glass_shadow(hero, blur=24, alpha=105)
-        hero_layout = QHBoxLayout(hero)
-        hero_layout.setContentsMargins(18, 18, 18, 18)
-        hero_layout.setSpacing(18)
+        self._hero = _HeroBannerFrame()
+        hero_layout = QHBoxLayout(self._hero)
+        hero_layout.setContentsMargins(20, 20, 20, 20)
+        hero_layout.setSpacing(20)
 
         self._poster = QLabel("No Poster")
-        self._poster.setFixedSize(188, 262)
+        self._poster.setFixedSize(192, 268)
         self._poster.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._poster.setStyleSheet(
-            "background-color: rgba(255,255,255,0.05); border-radius: 12px;"
+            "background-color: rgba(255,255,255,0.05); border-radius: 14px;"
         )
         hero_layout.addWidget(self._poster)
 
         info_col = QVBoxLayout()
-        info_col.setSpacing(10)
+        info_col.setSpacing(12)
 
         self._badges_layout = QHBoxLayout()
         self._badges_layout.setSpacing(6)
@@ -99,14 +146,13 @@ class DetailsView(QWidget):
 
         self._synopsis = QTextEdit()
         self._synopsis.setReadOnly(True)
-        self._synopsis.setMinimumHeight(190)
+        self._synopsis.setMinimumHeight(196)
         info_col.addWidget(self._synopsis, stretch=1)
         hero_layout.addLayout(info_col, stretch=1)
-        layout.addWidget(hero)
+        layout.addWidget(self._hero)
 
         actions_card = QFrame()
         actions_card.setObjectName("GlassPanel")
-        apply_glass_shadow(actions_card, blur=20, alpha=95)
         al = QVBoxLayout(actions_card)
         al.setContentsMargins(16, 14, 16, 14)
         al.setSpacing(10)
@@ -142,6 +188,7 @@ class DetailsView(QWidget):
         self._title.setText(details.title)
 
         self._poster.setPixmap(QPixmap())
+        self._hero.set_tint_pixmap(QPixmap())
         self._poster.setText("Loading...")
         poster_url = details.resizedPosterUrl or details.posterUrl
         if poster_url:
@@ -188,7 +235,8 @@ class DetailsView(QWidget):
 
     def _set_poster(self, pix: QPixmap) -> None:
         self._poster.setText("")
-        self._poster.setPixmap(rounded_pixmap(pix, QSize(188, 262), radius=12))
+        self._poster.setPixmap(rounded_pixmap(pix, QSize(192, 268), radius=14))
+        self._hero.set_tint_pixmap(pix)
 
     def _report_result(self, result: LaunchResult) -> None:
         self._status.setText(result.message)

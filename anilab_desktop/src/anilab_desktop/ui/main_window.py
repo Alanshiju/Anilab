@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import importlib.util
 import sys
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QSize, QThread, Signal
+from PySide6.QtGui import QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -23,6 +26,7 @@ from PySide6.QtWidgets import (
 from anilab_desktop.api.client import create_catalog_client
 from anilab_desktop.playback.launcher import launch_stream_result
 from anilab_desktop.playback.providers import (
+    BundledResolverProvider,
     FallbackStreamProvider,
     HttpJsonStreamProvider,
     JsonStreamProvider,
@@ -37,7 +41,13 @@ from .episodes_dialog import EpisodesDialog
 from .home_view import HomeView, SearchBrowseView
 from .player_view import PlayerView
 from .providers_dialog import ProvidersDialog
-from .widgets import APP_STYLESHEET, PosterLoader, apply_glass_shadow
+from .widgets import (
+    APP_STYLESHEET,
+    PosterLoader,
+    apply_windows_dwm_style,
+    build_ambient_backdrop,
+    get_app_icon,
+)
 
 
 class _Worker(QThread):
@@ -61,6 +71,9 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("AniLab Desktop")
+        icon = get_app_icon()
+        if not icon.isNull():
+            self.setWindowIcon(icon)
         self.resize(1100, 760)
         self.setStyleSheet(APP_STYLESHEET)
 
@@ -68,37 +81,48 @@ class MainWindow(QMainWindow):
         self._client = create_catalog_client()
         self._poster_loader = PosterLoader(self)
         self._workers: list[_Worker] = []
+        self._backdrop_cache = QPixmap()
+        self._backdrop_size = QSize()
+        self._dwm_applied = False
 
         root = QWidget()
         root_layout = QVBoxLayout(root)
-        root_layout.setContentsMargins(14, 14, 14, 14)
-        root_layout.setSpacing(12)
+        root_layout.setContentsMargins(16, 14, 16, 16)
+        root_layout.setSpacing(14)
         self.setCentralWidget(root)
 
         nav = QFrame()
         nav.setObjectName("GlassNav")
-        apply_glass_shadow(nav, blur=22, alpha=105)
         nav_layout = QHBoxLayout(nav)
-        nav_layout.setContentsMargins(16, 10, 16, 10)
-        nav_layout.setSpacing(10)
+        nav_layout.setContentsMargins(18, 10, 18, 10)
+        nav_layout.setSpacing(14)
 
         brand = QLabel("AniLab Desktop")
-        brand.setStyleSheet("font-size: 16px; font-weight: 700; color: #f9fafb;")
+        brand.setStyleSheet(
+            "font-size: 16px; font-weight: 700; color: #ffffff; letter-spacing: 0.3px;"
+        )
         nav_layout.addWidget(brand)
-        nav_layout.addSpacing(12)
+        nav_layout.addStretch()
 
-        self._nav_home = QPushButton("Home")
+        seg = QFrame()
+        seg.setObjectName("SegmentedControl")
+        seg_layout = QHBoxLayout(seg)
+        seg_layout.setContentsMargins(3, 3, 3, 3)
+        seg_layout.setSpacing(4)
+
+        self._nav_home = QPushButton("Latest Episodes")
         self._nav_home.setObjectName("NavButton")
         self._nav_home.setProperty("active", True)
         self._nav_home.clicked.connect(lambda: self._switch_top_view("home"))
 
-        self._nav_search = QPushButton("Search / Browse")
+        self._nav_search = QPushButton("Search")
         self._nav_search.setObjectName("NavButton")
         self._nav_search.setProperty("active", False)
         self._nav_search.clicked.connect(lambda: self._switch_top_view("search"))
 
-        nav_layout.addWidget(self._nav_home)
-        nav_layout.addWidget(self._nav_search)
+        seg_layout.addWidget(self._nav_home)
+        seg_layout.addWidget(self._nav_search)
+        nav_layout.addWidget(seg)
         nav_layout.addStretch()
         root_layout.addWidget(nav)
 
@@ -165,7 +189,7 @@ class MainWindow(QMainWindow):
         QMessageBox.warning(self, "API Error", msg)
 
     def _load_home(self) -> None:
-        self._home_view.set_status("Loading catalog from Jikan...")
+        self._home_view.set_status("Loading latest episodes...")
         self._run_async(
             self._client.get_home,
             self._home_view.set_home,
@@ -190,6 +214,7 @@ class MainWindow(QMainWindow):
         def _on_loaded(details) -> None:
             self._current_anime_id = details.id
             self._current_anime_title = details.title
+            self._current_anime_romaji = details.romaji_title
             self._details_view.set_details(
                 details,
                 player_token=self._store.get_player_token(),
@@ -228,22 +253,44 @@ class MainWindow(QMainWindow):
         http_prov = HttpJsonStreamProvider(
             lp.base_url, headers=lp.headers, timeout=lp.timeout
         )
-        cmd_prov = ResolverCommandProvider(
-            self._store.resolver_command, timeout=self._store.resolver_timeout
-        )
+        cmd_prov = self._build_resolver_provider()
 
         if key == "auto":
             chain: list[StreamProvider] = [json_prov]
             if lp.base_url.strip():
                 chain.append(http_prov)
-            if cmd_prov.command:
+            if cmd_prov is not None:
                 chain.append(cmd_prov)
             return FallbackStreamProvider(chain)
         if key == "http":
             return http_prov
         if key == "command":
-            return cmd_prov
+            return cmd_prov or ResolverCommandProvider(None)
         return json_prov
+
+    def _build_resolver_provider(self) -> StreamProvider | None:
+        if getattr(sys, "frozen", False):
+            meipass = getattr(sys, "_MEIPASS", "")
+            exe_dir = Path(sys.executable).resolve().parent
+            candidates = [
+                Path(meipass) / "scripts" / "resolver.py",
+                exe_dir / "scripts" / "resolver.py",
+            ]
+            for script_path in candidates:
+                if script_path.is_file():
+                    return BundledResolverProvider(script_path)
+            if self._store.resolver_command:
+                return ResolverCommandProvider(
+                    self._store.resolver_command,
+                    timeout=self._store.resolver_timeout,
+                )
+            return None
+        if self._store.resolver_command:
+            return ResolverCommandProvider(
+                self._store.resolver_command,
+                timeout=self._store.resolver_timeout,
+            )
+        return None
 
     def _on_provider_changed(self, key: str) -> None:
         self._store.active_provider = key
@@ -301,7 +348,14 @@ class MainWindow(QMainWindow):
         def _search():
             if isinstance(provider, JsonStreamProvider):
                 provider.ensure_template()
-            series_id = provider.search_match(title)
+            alt_title = getattr(self, "_current_anime_romaji", None)
+            if alt_title and hasattr(provider, "search_match"):
+                try:
+                    series_id = provider.search_match(title, alt_title=alt_title)
+                except TypeError:
+                    series_id = provider.search_match(title)
+            else:
+                series_id = provider.search_match(title)
             if not series_id:
                 return None, []
             return series_id, provider.list_episodes(series_id)
@@ -321,10 +375,13 @@ class MainWindow(QMainWindow):
                 self._details_view.set_status_message(msg)
                 QMessageBox.information(self, "No Episodes Found", msg)
                 return
-            dlg = EpisodesDialog(title, series_id, episodes, self)
+            alt_title = getattr(self, "_current_anime_romaji", None)
+            dlg = EpisodesDialog(
+                title, series_id, episodes, self, alt_title=alt_title
+            )
             dlg.episode_selected.connect(
-                lambda sid, eid, eps=episodes: self._resolve_and_play_episode(
-                    sid, eid, eps
+                lambda sid, eid, eps=episodes, prov=provider, t=title, alt=alt_title: self._resolve_and_play_episode(
+                    sid, eid, eps, provider=prov, title=t, alt_title=alt
                 )
             )
             dlg.exec()
@@ -340,7 +397,14 @@ class MainWindow(QMainWindow):
         )
 
         def _resolve():
-            sid = provider.search_match(title)
+            alt_title = getattr(self, "_current_anime_romaji", None)
+            if alt_title and hasattr(provider, "search_match"):
+                try:
+                    sid = provider.search_match(title, alt_title=alt_title)
+                except TypeError:
+                    sid = provider.search_match(title)
+            else:
+                sid = provider.search_match(title)
             if not sid:
                 return None, None, None
             eps = provider.list_episodes(sid)
@@ -382,20 +446,31 @@ class MainWindow(QMainWindow):
         self._run_async(_resolve, _on_done)
 
     def _resolve_and_play_episode(
-        self, series_id: str, episode_id: str, episodes=None
+        self,
+        series_id: str,
+        episode_id: str,
+        episodes=None,
+        *,
+        provider: StreamProvider | None = None,
+        title: str | None = None,
+        alt_title: str | None = None,
     ) -> None:
-        provider = self._get_active_provider()
+        active_provider = provider or self._get_active_provider()
+        eff_title = title or getattr(self, "_current_anime_title", None)
+        eff_alt = alt_title if alt_title is not None else getattr(
+            self, "_current_anime_romaji", None
+        )
         self._details_view.set_status_message(
             f"Resolving stream for episode {episode_id}..."
         )
 
         def _on_resolved(stream_res) -> None:
             if stream_res is None:
-                err = getattr(provider, "last_error", None)
+                err = getattr(active_provider, "last_error", None)
                 msg = (
-                    f"{provider.name} error: {err}"
+                    f"{active_provider.name} error: {err}"
                     if err
-                    else f"No stream returned for episode {episode_id} by {provider.name}."
+                    else f"No stream returned for episode {episode_id} by {active_provider.name}."
                 )
                 self._details_view.set_status_message(msg)
                 QMessageBox.warning(self, "Stream Error", msg)
@@ -418,10 +493,31 @@ class MainWindow(QMainWindow):
             if not launch_res.ok:
                 QMessageBox.warning(self, "VLC Playback", launch_res.message)
 
-        self._run_async(
-            lambda: provider.resolve_stream(series_id, episode_id),
-            _on_resolved,
-        )
+        def _do_resolve():
+            if isinstance(
+                active_provider,
+                (ResolverCommandProvider, BundledResolverProvider, FallbackStreamProvider),
+            ):
+                return active_provider.resolve_stream(
+                    series_id, episode_id, title=eff_title, alt_title=eff_alt
+                )
+            return active_provider.resolve_stream(series_id, episode_id)
+
+        self._run_async(_do_resolve, _on_resolved)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if not self._dwm_applied:
+            self._dwm_applied = True
+            apply_windows_dwm_style(self)
+
+    def paintEvent(self, event) -> None:
+        if self._backdrop_size != self.size() or self._backdrop_cache.isNull():
+            self._backdrop_size = self.size()
+            self._backdrop_cache = build_ambient_backdrop(self._backdrop_size)
+        painter = QPainter(self)
+        painter.drawPixmap(0, 0, self._backdrop_cache)
+        painter.end()
 
     def closeEvent(self, event) -> None:
         self._client.close()
@@ -430,6 +526,9 @@ class MainWindow(QMainWindow):
 
 def run_app() -> int:
     app = QApplication.instance() or QApplication(sys.argv)
+    icon = get_app_icon()
+    if not icon.isNull():
+        app.setWindowIcon(icon)
     win = MainWindow()
     win.show()
     return app.exec()

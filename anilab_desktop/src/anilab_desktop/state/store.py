@@ -39,7 +39,7 @@ class LocalStore:
         self.active_provider: str = "json"
         self.live_provider: LiveProviderConfig = LiveProviderConfig()
         self.resolver_command: list[str] | str | None = None
-        self.resolver_timeout: float = 20.0
+        self.resolver_timeout: float = 60.0
         self.last_watched_episode: dict[str, str] = {}
         self.load()
 
@@ -75,7 +75,7 @@ class LocalStore:
         elif isinstance(rc, str) and rc.strip():
             self.resolver_command = rc.strip()
         if isinstance(raw.get("resolver_timeout"), (int, float)):
-            self.resolver_timeout = float(raw["resolver_timeout"])
+            self.resolver_timeout = max(60.0, float(raw["resolver_timeout"]))
         lwe = raw.get("last_watched_episode")
         if isinstance(lwe, dict):
             self.last_watched_episode = {

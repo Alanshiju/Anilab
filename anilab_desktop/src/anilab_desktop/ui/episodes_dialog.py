@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QDialog,
     QHBoxLayout,
     QLabel,
@@ -14,6 +15,8 @@ from PySide6.QtWidgets import (
 )
 
 from anilab_desktop.playback.providers import EpisodeInfo
+
+from .widgets import apply_windows_dwm_style
 
 
 class EpisodesDialog(QDialog):
@@ -27,16 +30,26 @@ class EpisodesDialog(QDialog):
         series_id: str,
         episodes: list[EpisodeInfo],
         parent=None,
+        *,
+        alt_title: str | None = None,
     ) -> None:
         super().__init__(parent)
+        self._title = title
+        self._alt_title = alt_title
         self._series_id = series_id
+        self._dwm_applied = False
         self.setWindowTitle(f"Episodes — {title}")
-        self.resize(460, 360)
+        self.resize(480, 400)
 
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel(f"Select an episode for {title}:"))
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+        hdr = QLabel(f"Select an episode for {title}")
+        hdr.setStyleSheet("font-size: 14px; font-weight: 700; color: #ffffff;")
+        layout.addWidget(hdr)
 
         self._list = QListWidget()
+        self._list.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         for ep in episodes:
             label = f"Ep {ep.number}"
             if ep.title:
@@ -50,14 +63,21 @@ class EpisodesDialog(QDialog):
         layout.addWidget(self._list)
 
         btns = QHBoxLayout()
-        play_btn = QPushButton("Play in VLC")
+        play_btn = QPushButton("Play Episode")
         play_btn.setObjectName("PrimaryButton")
         play_btn.clicked.connect(self._on_play)
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.reject)
-        btns.addWidget(play_btn)
+        btns.addStretch()
         btns.addWidget(close_btn)
+        btns.addWidget(play_btn)
         layout.addLayout(btns)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if not self._dwm_applied:
+            self._dwm_applied = True
+            apply_windows_dwm_style(self)
 
     def _on_play(self) -> None:
         item = self._list.currentItem()

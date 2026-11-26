@@ -28,6 +28,7 @@ format
 status
 averageScore
 episodes
+nextAiringEpisode { episode }
 season
 seasonYear
 duration
@@ -39,7 +40,7 @@ studios(isMain: true) { nodes { name } }
 _HOME_QUERY = f"""
 query {{
   Page(page: 1, perPage: 24) {{
-    media(type: ANIME, sort: TRENDING_DESC, isAdult: false) {{
+    media(type: ANIME, status: RELEASING, sort: [TRENDING_DESC, UPDATED_AT_DESC], isAdult: false) {{
       {_MEDIA_FIELDS}
     }}
   }}
@@ -115,16 +116,21 @@ def _map_summary(item: dict[str, Any]) -> AnimeSummary:
     img = cover.get("extraLarge") or cover.get("large")
     avg = item.get("averageScore")
     score_str = f"{float(avg) / 10.0:.1f}" if isinstance(avg, (int, float)) else None
-    eps = item.get("episodes")
+    next_ep = (item.get("nextAiringEpisode") or {}).get("episode")
+    if isinstance(next_ep, int) and next_ep > 1:
+        ep_val: int | None = next_ep - 1
+    else:
+        ep_val = item.get("episodes")
     dur = item.get("duration")
     return AnimeSummary(
         id=int(item["id"]),
         title=str(title),
+        romaji_title=title_obj.get("romaji"),
         posterUrl=img,
         largePosterUrl=img,
         type=item.get("format"),
         score=score_str,
-        latestEpisode=str(eps) if eps is not None else None,
+        latestEpisode=str(ep_val) if ep_val is not None else None,
         premiered=_format_premiered(item.get("season"), item.get("seasonYear")),
         duration=f"{dur} min per ep" if isinstance(dur, int) else None,
         status=item.get("status"),
@@ -152,6 +158,7 @@ def _map_details(item: dict[str, Any]) -> AnimeDetails:
     return AnimeDetails(
         id=int(item["id"]),
         title=str(title),
+        romaji_title=title_obj.get("romaji"),
         titleEnglish=title_obj.get("english"),
         titleJapanese=title_obj.get("native"),
         synopsis=_strip_html(item.get("description")),
@@ -224,8 +231,8 @@ class AniListCatalogClient:
         media = (data.get("Page") or {}).get("media") or []
         items = [_map_summary(m) for m in media if isinstance(m, dict) and m.get("id")]
         home = HomeResponse(
-            spotlight=items[:8],
-            sections={"trending": items},
+            spotlight=[],
+            sections={"latest": items},
         )
         self._home_cache = (time.monotonic(), home)
         return home

@@ -320,91 +320,79 @@ def _load_resolver_module():
     return mod
 
 
-def test_resolver_script_upstream_mock() -> None:
+def test_resolver_stub_default_and_local_streams(tmp_path: Path) -> None:
     resolver = _load_resolver_module()
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        path = request.url.path
-        if path.endswith("/search"):
-            return httpx.Response(
-                200,
-                json={
-                    "results": [
-                        {"id": "other-1", "title": "Conan Movie"},
-                        {"id": "conan-tv", "title": "Detective Conan"},
-                    ]
-                },
-            )
-        if path.endswith("/episodes"):
-            return httpx.Response(
-                200,
-                json={
-                    "episodes": [
-                        {"id": "ep-1", "number": 1, "title": "Pilot", "isFiller": False}
-                    ]
-                },
-            )
-        if path.endswith("/watch"):
-            return httpx.Response(
-                200,
-                json={
-                    "headers": {
-                        "Referer": "https://upstream.example/",
-                        "User-Agent": "ResolverUA/1.0",
-                    },
-                    "sources": [
-                        {"url": "https://cdn.example.com/480.m3u8", "quality": "480p", "isM3U8": True},
-                        {"url": "https://cdn.example.com/1080.m3u8", "quality": "1080p", "isM3U8": True},
-                    ],
-                    "subtitles": [
-                        {"url": "https://cdn.example.com/en.vtt", "lang": "en", "label": "English"}
-                    ],
-                },
-            )
-        return httpx.Response(404)
-
-    transport = httpx.MockTransport(handler)
+    empty_streams = tmp_path / "empty_streams.json"
     ep_res = resolver.search_and_list_episodes(
-        "Detective Conan",
-        None,
-        base_url="https://upstream.example",
-        transport=transport,
+        "Overgeared", None, count=3, streams_path=empty_streams
     )
-    assert ep_res["series_id"] == "conan-tv"
-    assert ep_res["episodes"] == [
-        {"id": "ep-1", "number": "1", "title": "Pilot", "is_filler": False}
-    ]
+    assert ep_res["series_id"] == "overgeared"
+    assert [e["number"] for e in ep_res["episodes"]] == ["1", "2", "3"]
 
-    stream_res = resolver.resolve_episode_stream(
-        "Detective Conan",
-        "conan-tv",
-        "ep-1",
-        base_url="https://upstream.example",
-        transport=transport,
+    missing_res = resolver.resolve_episode_stream(
+        "Overgeared", None, "1", streams_path=empty_streams
     )
-    stream = stream_res["stream"]
+    assert missing_res["stream"] is None
+    assert "No local stream configured" in missing_res["error"]
+
+    streams_file = tmp_path / "streams.json"
+    streams_file.write_text(
+        json.dumps(
+            {
+                "series": [
+                    {
+                        "id": "demo-show",
+                        "title": "Demo Show",
+                        "aliases": ["Demo Romaji"],
+                        "episodes": [
+                            {
+                                "id": "1",
+                                "number": "1",
+                                "stream": {
+                                    "url": "https://cdn.example.com/master.m3u8",
+                                    "headers": {"Referer": "https://example.com/"},
+                                    "quality": "720p",
+                                },
+                            }
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    hit = resolver.resolve_episode_stream(
+        "Other Title", None, "1", alt_title="Demo Romaji", streams_path=streams_file
+    )
+    assert hit["stream"]["url"] == "https://cdn.example.com/master.m3u8"
+
+
+def test_bundled_resolver_provider_preserves_title_and_error(tmp_path: Path) -> None:
+    from anilab_desktop.playback.providers import BundledResolverProvider
+
+    script = tmp_path / "resolver.py"
+    script.write_text(
+        "\n".join(
+            [
+                "def search_and_list_episodes(title, series_id):",
+                "    return {'series_id': 'slug-id', 'episodes': [{'id': '1', 'number': '1'}]}",
+                "def resolve_episode_stream(title, series_id, episode):",
+                "    if title == 'A Returner\\'s Magic Should be Special Season 2':",
+                "        return {'stream': {'url': 'https://cdn.example.com/master.m3u8', 'headers': {}}}",
+                "    return {'stream': None, 'error': f'No results for {title}'}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    prov = BundledResolverProvider(script)
+    sid = prov.search_match("A Returner's Magic Should be Special Season 2")
+    assert sid == "slug-id"
+    stream = prov.resolve_stream(sid, "1")
     assert stream is not None
-    assert stream["url"] == "https://cdn.example.com/1080.m3u8"
-    assert stream["quality"] == "1080p"
-    assert stream["headers"]["Referer"] == "https://upstream.example/"
-    assert stream["headers"]["User-Agent"] == "ResolverUA/1.0"
-    assert stream["subtitles"][0]["url"] == "https://cdn.example.com/en.vtt"
+    assert stream.url == "https://cdn.example.com/master.m3u8"
 
-
-def test_resolver_script_offline_returns_null_stream(capsys) -> None:
-    resolver = _load_resolver_module()
-
-    def offline_handler(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("connection refused", request=request)
-
-    res = resolver.resolve_episode_stream(
-        "Detective Conan",
-        "conan-tv",
-        "ep-1",
-        base_url="http://127.0.0.1:9999",
-        transport=httpx.MockTransport(offline_handler),
-    )
-    assert res == {"stream": None}
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    assert "HTTP error" in captured.err or "Upstream unavailable" in captured.err
+    # Error detail surfaces when stream is None
+    assert prov.resolve_stream("unknown-title", "1") is None
+    assert prov.last_error == "No results for unknown-title"

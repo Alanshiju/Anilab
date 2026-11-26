@@ -16,15 +16,15 @@ from .jikan import JIKAN_BASE_URL, JikanCatalogClient
 
 
 class FallbackCatalogClient:
-    """Tries primary (Jikan v4) and automatically falls back to AniList GraphQL."""
+    """Tries primary (AniList GraphQL) and falls back to Jikan v4 on error."""
 
     def __init__(
         self,
-        primary: JikanCatalogClient | None = None,
-        fallback: AniListCatalogClient | None = None,
+        primary: Any = None,
+        fallback: Any = None,
     ) -> None:
-        self._primary = primary or JikanCatalogClient()
-        self._fallback = fallback or AniListCatalogClient()
+        self._primary = primary or AniListCatalogClient()
+        self._fallback = fallback or JikanCatalogClient()
         self._id_source: dict[int, str] = {}
 
     def close(self) -> None:
@@ -89,8 +89,8 @@ class FallbackCatalogClient:
 
 
 def create_catalog_client() -> FallbackCatalogClient:
-    """Create a FallbackCatalogClient (Jikan v4 primary -> AniList GraphQL fallback)."""
+    """Create a FallbackCatalogClient (AniList GraphQL primary -> Jikan v4 fallback)."""
     override = os.environ.get("ANILAB_API_BASE_URL", "").strip()
-    primary = JikanCatalogClient(base_url=override or JIKAN_BASE_URL)
-    fallback = AniListCatalogClient()
+    primary = AniListCatalogClient()
+    fallback = JikanCatalogClient(base_url=override or JIKAN_BASE_URL)
     return FallbackCatalogClient(primary=primary, fallback=fallback)

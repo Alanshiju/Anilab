@@ -16,6 +16,7 @@ env/
 build/
 dist/
 *.spec
+*.exe
 
 # IDE / OS files
 .vscode/
@@ -34,3 +35,5 @@ decompiled*/
 state.json
 streams.json
 *.log
+scripts/resolver.local.py
+anilab_desktop/scripts/resolver.local.py

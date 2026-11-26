@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
 import shlex
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -33,6 +35,7 @@ class StreamResult:
     url: str
     headers: dict[str, str] = field(default_factory=dict)
     subtitles: list[SubtitleTrack] = field(default_factory=list)
+    audio_urls: list[str] = field(default_factory=list)
     quality: str | None = None
 
 
@@ -529,10 +532,17 @@ def _parse_stream_result(data: Any) -> StreamResult | None:
                     label=s.get("label"),
                 )
             )
+    audio_urls = [
+        str(a) for a in (stream.get("audio_urls") or []) if a
+    ]
+    single_audio = stream.get("audio_url")
+    if isinstance(single_audio, str) and single_audio and single_audio not in audio_urls:
+        audio_urls.insert(0, single_audio)
     return StreamResult(
         url=str(url),
         headers=headers,
         subtitles=subs,
+        audio_urls=audio_urls,
         quality=stream.get("quality"),
     )
 
@@ -546,7 +556,7 @@ class ResolverCommandProvider:
         self,
         command: list[str] | str | None,
         *,
-        timeout: float = 20.0,
+        timeout: float = 60.0,
     ) -> None:
         if isinstance(command, str):
             self.command: list[str] = (
@@ -558,12 +568,18 @@ class ResolverCommandProvider:
             self.command = []
         self.timeout = timeout
         self.last_error: str | None = None
+        self._titles_by_id: dict[str, tuple[str, str | None]] = {}
 
     def _run_json(self, extra_args: list[str]) -> Any | None:
         if not self.command:
             self.last_error = "Resolver command is not configured."
             return None
         self.last_error = None
+        run_kwargs: dict[str, Any] = {}
+        if sys.platform == "win32":
+            run_kwargs["creationflags"] = getattr(
+                subprocess, "CREATE_NO_WINDOW", 0x08000000
+            )
         try:
             proc = subprocess.run(
                 [*self.command, *extra_args],
@@ -571,6 +587,7 @@ class ResolverCommandProvider:
                 text=True,
                 timeout=self.timeout,
                 check=False,
+                **run_kwargs,
             )
         except Exception as exc:
             self.last_error = str(exc)
@@ -582,26 +599,56 @@ class ResolverCommandProvider:
             return None
 
         try:
-            return json.loads(proc.stdout)
+            data = json.loads(proc.stdout)
         except Exception as exc:
             self.last_error = f"Invalid resolver JSON: {exc}"
             return None
 
-    def search_match(self, title: str) -> str | None:
-        data = self._run_json(["--title", title])
+        if isinstance(data, dict) and data.get("error"):
+            self.last_error = str(data["error"])
+        elif isinstance(data, dict) and data.get("stream") is None and proc.stderr:
+            err_lines = [ln.strip() for ln in proc.stderr.splitlines() if ln.strip()]
+            if err_lines:
+                self.last_error = err_lines[-1][:240]
+        return data
+
+    def search_match(
+        self, title: str, *, alt_title: str | None = None
+    ) -> str | None:
+        args = ["--title", title]
+        if alt_title and alt_title.strip():
+            args.extend(["--alt-title", alt_title.strip()])
+        data = self._run_json(args)
         if isinstance(data, dict):
             sid = data.get("series_id") or data.get("id")
             if sid:
-                return str(sid)
+                sid_str = str(sid)
+                self._titles_by_id[sid_str] = (title, alt_title)
+                return sid_str
             eps = data.get("episodes")
             if isinstance(eps, list) and eps:
+                self._titles_by_id[title] = (title, alt_title)
                 return title
         elif isinstance(data, list) and data:
+            self._titles_by_id[title] = (title, alt_title)
             return title
         return None
 
-    def list_episodes(self, series_id: str) -> list[EpisodeInfo]:
-        data = self._run_json(["--series-id", series_id, "--title", series_id])
+    def list_episodes(
+        self,
+        series_id: str,
+        *,
+        title: str | None = None,
+        alt_title: str | None = None,
+    ) -> list[EpisodeInfo]:
+        stored_title, stored_alt = self._titles_by_id.get(
+            series_id, (series_id, None)
+        )
+        eff_title = title or stored_title
+        eff_alt = alt_title if alt_title is not None else stored_alt
+        if title or alt_title is not None:
+            self._titles_by_id[series_id] = (eff_title, eff_alt)
+        data = self._run_json(["--series-id", series_id, "--title", eff_title])
         if isinstance(data, dict):
             raw_eps = data.get("episodes") or data.get("list") or data.get("data")
         else:
@@ -609,12 +656,124 @@ class ResolverCommandProvider:
         return _parse_episodes_list(raw_eps)
 
     def resolve_stream(
-        self, series_id: str, episode_id: str
+        self,
+        series_id: str,
+        episode_id: str,
+        *,
+        title: str | None = None,
+        alt_title: str | None = None,
     ) -> StreamResult | None:
-        data = self._run_json(
-            ["--series-id", series_id, "--title", series_id, "--episode", episode_id]
+        stored_title, stored_alt = self._titles_by_id.get(
+            series_id, (series_id, None)
         )
+        eff_title = title or stored_title
+        eff_alt = alt_title if alt_title is not None else stored_alt
+        args = ["--series-id", series_id, "--title", eff_title, "--episode", episode_id]
+        if eff_alt and eff_alt.strip():
+            args.extend(["--alt-title", eff_alt.strip()])
+        data = self._run_json(args)
         return _parse_stream_result(data)
+
+
+class BundledResolverProvider:
+    """In-process StreamProvider for bundled scripts/resolver.py in frozen builds."""
+
+    name: str = "Resolver Command (Bundled)"
+
+    def __init__(self, script_path: Path) -> None:
+        self._script_path = script_path
+        self.last_error: str | None = None
+        self._mod: Any = None
+        self._titles_by_id: dict[str, tuple[str, str | None]] = {}
+
+    def _load(self):
+        if self._mod is not None:
+            return self._mod
+        if not self._script_path.is_file():
+            raise FileNotFoundError(
+                f"Bundled resolver script not found at {self._script_path}"
+            )
+        spec = importlib.util.spec_from_file_location(
+            "anilab_bundled_resolver", self._script_path
+        )
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"Cannot load resolver at {self._script_path}")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        self._mod = mod
+        return mod
+
+    def search_match(
+        self, title: str, *, alt_title: str | None = None
+    ) -> str | None:
+        self.last_error = None
+        try:
+            res = self._load().search_and_list_episodes(title, None)
+            sid = res.get("series_id")
+            if sid:
+                sid_str = str(sid)
+                self._titles_by_id[sid_str] = (title, alt_title)
+                return sid_str
+            return None
+        except Exception as exc:
+            self.last_error = str(exc)
+            return None
+
+    def list_episodes(
+        self,
+        series_id: str,
+        *,
+        title: str | None = None,
+        alt_title: str | None = None,
+    ) -> list[EpisodeInfo]:
+        self.last_error = None
+        stored_title, stored_alt = self._titles_by_id.get(
+            series_id, (series_id, None)
+        )
+        eff_title = title or stored_title
+        eff_alt = alt_title if alt_title is not None else stored_alt
+        if title or alt_title is not None or series_id not in self._titles_by_id:
+            self._titles_by_id[series_id] = (eff_title, eff_alt)
+        try:
+            res = self._load().search_and_list_episodes(eff_title, series_id)
+            return _parse_episodes_list(res.get("episodes"))
+        except Exception as exc:
+            self.last_error = str(exc)
+            return []
+
+    def resolve_stream(
+        self,
+        series_id: str,
+        episode_id: str,
+        *,
+        title: str | None = None,
+        alt_title: str | None = None,
+    ) -> StreamResult | None:
+        self.last_error = None
+        stored_title, stored_alt = self._titles_by_id.get(
+            series_id, (series_id, None)
+        )
+        eff_title = title or stored_title
+        eff_alt = alt_title if alt_title is not None else stored_alt
+        try:
+            fn = self._load().resolve_episode_stream
+            if eff_alt and eff_alt.strip():
+                res = fn(eff_title, series_id, episode_id, alt_title=eff_alt.strip())
+            else:
+                res = fn(eff_title, series_id, episode_id)
+        except Exception as exc:
+            self.last_error = str(exc)
+            return None
+
+        parsed = _parse_stream_result(res)
+        if parsed is None:
+            if isinstance(res, dict) and res.get("error"):
+                self.last_error = str(res["error"])
+            else:
+                self.last_error = (
+                    f"No stream returned for '{title}' Ep {episode_id}."
+                )
+        return parsed
 
 
 class FallbackStreamProvider:
@@ -638,10 +797,17 @@ class FallbackStreamProvider:
                 return int(prefix), rest
         return None, series_id
 
-    def search_match(self, title: str) -> str | None:
+    def search_match(
+        self, title: str, *, alt_title: str | None = None
+    ) -> str | None:
         errors: list[str] = []
         for idx, prov in enumerate(self.providers):
-            sid = prov.search_match(title)
+            if alt_title and isinstance(
+                prov, (ResolverCommandProvider, BundledResolverProvider)
+            ):
+                sid = prov.search_match(title, alt_title=alt_title)
+            else:
+                sid = prov.search_match(title)
             if sid:
                 self.last_error = None
                 return self._encode_id(idx, sid)
@@ -669,11 +835,25 @@ class FallbackStreamProvider:
         return []
 
     def resolve_stream(
-        self, series_id: str, episode_id: str
+        self,
+        series_id: str,
+        episode_id: str,
+        *,
+        title: str | None = None,
+        alt_title: str | None = None,
     ) -> StreamResult | None:
+        def _call(prov: StreamProvider, rid: str) -> StreamResult | None:
+            if (title is not None or alt_title is not None) and isinstance(
+                prov, (ResolverCommandProvider, BundledResolverProvider)
+            ):
+                return prov.resolve_stream(
+                    rid, episode_id, title=title, alt_title=alt_title
+                )
+            return prov.resolve_stream(rid, episode_id)
+
         idx, raw_id = self._decode_id(series_id)
         if idx is not None and 0 <= idx < len(self.providers):
-            res = self.providers[idx].resolve_stream(raw_id, episode_id)
+            res = _call(self.providers[idx], raw_id)
             if res is not None:
                 self.last_error = None
                 return res
@@ -681,7 +861,7 @@ class FallbackStreamProvider:
             return None
 
         for prov in self.providers:
-            res = prov.resolve_stream(raw_id, episode_id)
+            res = _call(prov, raw_id)
             if res is not None:
                 self.last_error = None
                 return res

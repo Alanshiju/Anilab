@@ -44,6 +44,7 @@ def _map_summary(item: dict[str, Any]) -> AnimeSummary:
     return AnimeSummary(
         id=int(item["mal_id"]),
         title=str(item.get("title_english") or item.get("title") or ""),
+        romaji_title=item.get("title"),
         posterUrl=small,
         largePosterUrl=large,
         type=item.get("type"),
@@ -84,6 +85,7 @@ def _map_details(item: dict[str, Any]) -> AnimeDetails:
     return AnimeDetails(
         id=int(item["mal_id"]),
         title=str(item.get("title_english") or item.get("title") or ""),
+        romaji_title=item.get("title"),
         titleEnglish=item.get("title_english"),
         titleJapanese=item.get("title_japanese"),
         titleSynonyms=[

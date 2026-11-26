@@ -226,10 +226,9 @@ def test_anilist_and_fallback_catalog_client_on_timeout(tmp_path: Path) -> None:
     )
     with FallbackCatalogClient(primary=jikan, fallback=anilist) as client:
         home = client.get_home()
-        assert len(home.spotlight) == 1
-        assert home.spotlight[0].id == 154587
-        assert home.spotlight[0].score == "9.1"
-        assert "trending" in home.sections
+        assert "latest" in home.sections
+        assert home.sections["latest"][0].id == 154587
+        assert home.sections["latest"][0].score == "9.1"
 
         details = client.get_anime_details(154587)
         assert details.title == "Frieren: Beyond Journey's End"

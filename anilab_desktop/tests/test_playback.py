@@ -38,6 +38,7 @@ def test_build_vlc_command_with_headers() -> None:
     )
     assert cmd == [
         r"C:\Program Files\VideoLAN\VLC\vlc.exe",
+        "--network-caching=5000",
         "--http-referrer=https://animelo.to/",
         "--http-user-agent=AniMeloDesktop/1.0",
         "https://example.com/video.m3u8",
@@ -65,6 +66,7 @@ def test_launch_in_vlc_non_blocking(tmp_path: Path, monkeypatch) -> None:
     assert launched == [
         [
             str(fake_vlc),
+            "--network-caching=5000",
             "--http-referrer=https://example.com/",
             "https://example.com/trailer.mp4",
         ]
@@ -114,6 +116,7 @@ def test_launch_stream_result_with_headers_and_subtitles(
     fake_vlc.write_bytes(b"")
 
     launched: list[list[str]] = []
+    monkeypatch.setattr(launcher, "find_mpv_executable", lambda *_a, **_kw: None)
     monkeypatch.setattr(
         launcher.subprocess,
         "Popen",
@@ -138,8 +141,50 @@ def test_launch_stream_result_with_headers_and_subtitles(
     assert launched == [
         [
             str(fake_vlc),
+            "--network-caching=5000",
             "--http-referrer=https://provider.example/",
             "--http-user-agent=CustomUA/1.0",
+            "--sub-file=https://cdn.example.com/en.vtt",
+            "https://cdn.example.com/master.m3u8",
+        ]
+    ]
+
+
+def test_launch_stream_result_prefers_mpv(tmp_path: Path, monkeypatch) -> None:
+    fake_mpv = tmp_path / "mpv.exe"
+    fake_mpv.write_bytes(b"")
+
+    launched: list[list[str]] = []
+    monkeypatch.setattr(
+        launcher.subprocess,
+        "Popen",
+        lambda cmd, *a, **kw: launched.append(cmd) or object(),
+    )
+
+    stream = StreamResult(
+        url="https://cdn.example.com/master.m3u8",
+        headers={
+            "Referer": "https://embed.example/",
+            "User-Agent": "Mozilla/5.0",
+        },
+        subtitles=[
+            SubtitleTrack(
+                url="https://cdn.example.com/en.vtt", lang="en", label="English"
+            )
+        ],
+    )
+    res = launcher.launch_stream_result(stream, mpv_path=str(fake_mpv))
+    assert res.ok is True
+    assert launched == [
+        [
+            str(fake_mpv),
+            "--no-ytdl",
+            "--force-window=immediate",
+            "--hls-bitrate=3200000",
+            "--cache=yes",
+            "--cache-secs=90",
+            "--demuxer-max-bytes=120M",
+            "--http-header-fields=Referer: https://embed.example/,User-Agent: Mozilla/5.0",
             "--sub-file=https://cdn.example.com/en.vtt",
             "https://cdn.example.com/master.m3u8",
         ]
@@ -153,3 +198,55 @@ def test_store_persists_vlc_path(tmp_path: Path) -> None:
 
     reloaded = LocalStore(tmp_path / "state.json")
     assert reloaded.vlc_path == r"D:\Apps\VLC\vlc.exe"
+
+
+def test_find_mpv_executable_frozen_prefers_bundled(tmp_path: Path, monkeypatch) -> None:
+    fake_exe = tmp_path / "AniLab Desktop.exe"
+    fake_exe.write_bytes(b"")
+    bundled_mpv = tmp_path / "player" / "mpv.exe"
+    bundled_mpv.parent.mkdir(parents=True)
+    bundled_mpv.write_bytes(b"")
+
+    monkeypatch.setattr(launcher.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(launcher.sys, "executable", str(fake_exe))
+
+    assert launcher.find_mpv_executable() == str(bundled_mpv)
+
+    # Onefile _MEIPASS takes priority when present
+    meipass_dir = tmp_path / "_MEI1234"
+    meipass_mpv = meipass_dir / "player" / "mpv.exe"
+    meipass_mpv.parent.mkdir(parents=True)
+    meipass_mpv.write_bytes(b"")
+    monkeypatch.setattr(launcher.sys, "_MEIPASS", str(meipass_dir), raising=False)
+    assert launcher.find_mpv_executable() == str(meipass_mpv)
+
+
+def test_find_mpv_executable_never_returns_com(tmp_path: Path, monkeypatch) -> None:
+    mpv_com = tmp_path / "mpv.COM"
+    mpv_com.write_bytes(b"")
+    monkeypatch.setattr(launcher.sys, "frozen", False, raising=False)
+    monkeypatch.setattr(launcher.shutil, "which", lambda _n: str(mpv_com))
+
+    # No .exe sibling -> returns None instead of mpv.COM
+    assert launcher.find_mpv_executable(common_paths=()) is None
+
+    mpv_exe = tmp_path / "mpv.exe"
+    mpv_exe.write_bytes(b"")
+    assert launcher.find_mpv_executable(common_paths=()) == str(mpv_exe)
+
+
+def test_launch_in_mpv_passes_create_no_window_on_win32(tmp_path: Path, monkeypatch) -> None:
+    fake_mpv = tmp_path / "mpv.exe"
+    fake_mpv.write_bytes(b"")
+    seen_kwargs: list[dict] = []
+
+    def fake_popen(cmd, *args, **kwargs):
+        seen_kwargs.append(kwargs)
+        return object()
+
+    monkeypatch.setattr(launcher.sys, "platform", "win32")
+    monkeypatch.setattr(launcher.subprocess, "Popen", fake_popen)
+
+    res = launcher.launch_in_mpv("https://cdn.example.com/master.m3u8", mpv_path=str(fake_mpv))
+    assert res.ok is True
+    assert seen_kwargs and "creationflags" in seen_kwargs[0]

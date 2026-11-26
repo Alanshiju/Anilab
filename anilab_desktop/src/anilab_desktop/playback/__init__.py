@@ -1,13 +1,17 @@
 """Desktop playback and external link/player launcher."""
 
 from .launcher import (
+    COMMON_WINDOWS_MPV_PATHS,
     COMMON_WINDOWS_VLC_PATHS,
     DIRECT_MEDIA_EXTENSIONS,
     LaunchResult,
+    build_mpv_command,
     build_vlc_command,
+    find_mpv_executable,
     find_vlc_executable,
     format_player_launch_summary,
     is_direct_media_url,
+    launch_in_mpv,
     launch_in_vlc,
     launch_stream_result,
     normalize_in_app_url,

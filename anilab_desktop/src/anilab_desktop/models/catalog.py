@@ -16,6 +16,7 @@ class _BaseModel(BaseModel):
 class AnimeSummary(_BaseModel):
     id: int
     title: str = ""
+    romaji_title: str | None = None
     posterUrl: str | None = None
     largePosterUrl: str | None = None
     type: str | None = None
@@ -47,6 +48,7 @@ class AnimeProvidersResponse(_BaseModel):
 class AnimeDetails(_BaseModel):
     id: int
     title: str = ""
+    romaji_title: str | None = None
     titleEnglish: str | None = None
     titleJapanese: str | None = None
     titleSynonyms: list[str] = Field(default_factory=list)

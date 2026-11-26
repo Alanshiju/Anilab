@@ -1,8 +1,10 @@
-"""Shared glassmorphism styling, smooth scrolling, image loader, and animated AnimeCard."""
+"""Apple-style glassmorphism styling, 60fps smooth scrolling, cached image loader, and AnimeCard."""
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable
+from pathlib import Path
 
 from PySide6.QtCore import (
     QEasingCurve,
@@ -11,14 +13,23 @@ from PySide6.QtCore import (
     QRect,
     QSize,
     Qt,
+    QTimer,
     QUrl,
     Signal,
 )
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPixmap
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QFontMetrics,
+    QIcon,
+    QPainter,
+    QPainterPath,
+    QPixmap,
+    QRadialGradient,
+)
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtWidgets import (
     QFrame,
-    QGraphicsDropShadowEffect,
     QHBoxLayout,
     QLabel,
     QLayout,
@@ -31,125 +42,109 @@ from PySide6.QtWidgets import (
 from anilab_desktop.models.catalog import AnimeSummary
 
 APP_STYLESHEET = """
-QMainWindow, QDialog {
-    background: qlineargradient(
-        x1: 0, y1: 0, x2: 1, y2: 1,
-        stop: 0 #070b14,
-        stop: 0.45 #0f172a,
-        stop: 1 #131129
-    );
-    color: #e5e7eb;
-    font-family: "Segoe UI", "Inter", sans-serif;
+QMainWindow {
+    background: transparent;
+    color: #f3f4f6;
+    font-family: "Segoe UI Variable", "Segoe UI", "Inter", sans-serif;
+    font-size: 13px;
+}
+
+QDialog {
+    background-color: #0b0e18;
+    color: #f3f4f6;
+    font-family: "Segoe UI Variable", "Segoe UI", "Inter", sans-serif;
     font-size: 13px;
 }
 
 QWidget {
-    color: #e5e7eb;
+    color: #f3f4f6;
     background: transparent;
 }
 
 QFrame#GlassNav {
-    background-color: rgba(17, 24, 39, 0.68);
+    background-color: rgba(24, 26, 38, 0.58);
     border: 1px solid rgba(255, 255, 255, 0.14);
-    border-radius: 16px;
+    border-radius: 18px;
 }
 
 QFrame#GlassPanel {
-    background-color: rgba(20, 27, 45, 0.66);
-    border: 1px solid rgba(255, 255, 255, 0.13);
-    border-radius: 16px;
+    background-color: rgba(24, 26, 38, 0.58);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 18px;
+}
+
+QFrame#SegmentedControl {
+    background-color: rgba(12, 14, 22, 0.62);
+    border: 1px solid rgba(255, 255, 255, 0.11);
+    border-radius: 14px;
+    padding: 3px;
 }
 
 QFrame#AnimeCard {
-    background-color: rgba(24, 33, 56, 0.62);
+    background-color: rgba(24, 26, 38, 0.58);
     border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 16px;
 }
 
 QFrame#AnimeCard[hovered="true"] {
-    background-color: rgba(36, 48, 82, 0.86);
-    border: 1px solid rgba(167, 139, 250, 0.78);
-}
-
-QTabWidget::pane {
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 16px;
-    background-color: rgba(15, 23, 42, 0.52);
-    padding: 8px;
-}
-
-QTabBar::tab {
-    background-color: rgba(255, 255, 255, 0.06);
-    color: #9ca3af;
-    border: 1px solid rgba(255, 255, 255, 0.10);
-    border-radius: 10px;
-    padding: 7px 16px;
-    margin-right: 6px;
-    margin-bottom: 6px;
-    font-weight: 600;
-}
-
-QTabBar::tab:selected {
-    background-color: rgba(124, 58, 237, 0.38);
-    color: #ffffff;
-    border: 1px solid rgba(167, 139, 250, 0.65);
-}
-
-QTabBar::tab:hover:!selected {
-    background-color: rgba(255, 255, 255, 0.11);
-    color: #f3f4f6;
+    background-color: rgba(38, 42, 66, 0.78);
+    border: 1px solid rgba(168, 130, 255, 0.55);
 }
 
 QPushButton {
     background-color: rgba(255, 255, 255, 0.08);
     color: #f9fafb;
     border: 1px solid rgba(255, 255, 255, 0.14);
-    border-radius: 10px;
-    padding: 7px 14px;
+    border-radius: 11px;
+    padding: 7px 15px;
     font-weight: 600;
 }
 
 QPushButton:hover {
-    background-color: rgba(124, 58, 237, 0.40);
-    border: 1px solid rgba(167, 139, 250, 0.65);
+    background-color: rgba(168, 130, 255, 0.28);
+    border: 1px solid rgba(168, 130, 255, 0.55);
 }
 
 QPushButton:pressed {
-    background-color: rgba(109, 40, 217, 0.68);
+    background-color: rgba(139, 92, 246, 0.55);
 }
 
 QPushButton#PrimaryButton {
-    background-color: rgba(124, 58, 237, 0.78);
-    border: 1px solid rgba(196, 181, 253, 0.58);
+    background-color: rgba(139, 92, 246, 0.85);
+    border: 1px solid rgba(216, 180, 254, 0.58);
+    color: #ffffff;
+    font-weight: 700;
 }
 
 QPushButton#PrimaryButton:hover {
-    background-color: rgba(139, 92, 246, 0.94);
+    background-color: rgba(154, 112, 255, 0.96);
+    border: 1px solid rgba(233, 213, 255, 0.80);
 }
 
 QPushButton#NavButton {
     background-color: transparent;
     border: 1px solid transparent;
-    border-radius: 10px;
-    padding: 7px 14px;
+    border-radius: 11px;
+    padding: 6px 18px;
     color: #9ca3af;
+    font-weight: 600;
 }
 
 QPushButton#NavButton[active="true"] {
-    background-color: rgba(124, 58, 237, 0.36);
-    border: 1px solid rgba(167, 139, 250, 0.58);
+    background-color: rgba(139, 92, 246, 0.42);
+    border: 1px solid rgba(196, 181, 253, 0.52);
     color: #ffffff;
 }
 
 QPushButton#NavButton:hover:!active {
-    background-color: rgba(255, 255, 255, 0.08);
+    background-color: rgba(255, 255, 255, 0.07);
     color: #f3f4f6;
 }
 
 QComboBox {
-    background-color: rgba(15, 23, 42, 0.78);
+    background-color: rgba(18, 20, 32, 0.78);
     border: 1px solid rgba(255, 255, 255, 0.14);
-    border-radius: 10px;
+    border-radius: 11px;
     padding: 6px 12px;
     color: #f3f4f6;
     font-weight: 600;
@@ -161,33 +156,34 @@ QComboBox::drop-down {
 }
 
 QComboBox QAbstractItemView {
-    background-color: #111827;
+    background-color: #121420;
     border: 1px solid rgba(255, 255, 255, 0.16);
-    selection-background-color: rgba(124, 58, 237, 0.55);
+    selection-background-color: rgba(139, 92, 246, 0.55);
     color: #f9fafb;
+    outline: 0;
 }
 
 QLineEdit, QTextEdit, QListWidget {
-    background-color: rgba(15, 23, 42, 0.74);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 12px;
+    background-color: rgba(16, 18, 28, 0.72);
+    border: 1px solid rgba(255, 255, 255, 0.13);
+    border-radius: 13px;
     padding: 8px 12px;
     color: #f3f4f6;
 }
 
 QLineEdit:focus, QTextEdit:focus {
-    border: 1px solid rgba(167, 139, 250, 0.72);
+    border: 1px solid rgba(168, 130, 255, 0.65);
 }
 
 QListWidget::item {
-    padding: 8px 10px;
-    border-radius: 8px;
+    padding: 9px 12px;
+    border-radius: 10px;
     margin: 2px 0px;
 }
 
 QListWidget::item:selected {
-    background-color: rgba(124, 58, 237, 0.42);
-    border: 1px solid rgba(167, 139, 250, 0.55);
+    background-color: rgba(139, 92, 246, 0.42);
+    border: 1px solid rgba(196, 181, 253, 0.52);
 }
 
 QListWidget::item:hover:!selected {
@@ -195,21 +191,21 @@ QListWidget::item:hover:!selected {
 }
 
 QLabel#Badge {
-    background-color: rgba(255, 255, 255, 0.09);
+    background-color: rgba(255, 255, 255, 0.08);
     border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 7px;
-    padding: 2px 8px;
-    font-size: 11px;
+    border-radius: 8px;
+    padding: 2px 7px;
+    font-size: 10.5px;
     font-weight: 600;
     color: #d1d5db;
 }
 
 QLabel#ScoreBadge {
-    background-color: rgba(245, 158, 11, 0.22);
-    border: 1px solid rgba(251, 191, 36, 0.45);
-    border-radius: 7px;
-    padding: 2px 8px;
-    font-size: 11px;
+    background-color: rgba(245, 158, 11, 0.20);
+    border: 1px solid rgba(251, 191, 36, 0.42);
+    border-radius: 8px;
+    padding: 2px 7px;
+    font-size: 10.5px;
     font-weight: 700;
     color: #fde68a;
 }
@@ -217,9 +213,9 @@ QLabel#ScoreBadge {
 QLabel#WatchedBadge {
     background-color: rgba(16, 185, 129, 0.20);
     border: 1px solid rgba(52, 211, 153, 0.45);
-    border-radius: 7px;
-    padding: 2px 8px;
-    font-size: 11px;
+    border-radius: 8px;
+    padding: 2px 7px;
+    font-size: 10.5px;
     font-weight: 700;
     color: #a7f3d0;
 }
@@ -231,18 +227,18 @@ QScrollArea {
 
 QScrollBar:vertical {
     background: transparent;
-    width: 8px;
+    width: 7px;
     margin: 4px 2px;
 }
 
 QScrollBar::handle:vertical {
     background: rgba(255, 255, 255, 0.18);
-    border-radius: 4px;
-    min-height: 28px;
+    border-radius: 3px;
+    min-height: 32px;
 }
 
 QScrollBar::handle:vertical:hover {
-    background: rgba(167, 139, 250, 0.58);
+    background: rgba(168, 130, 255, 0.58);
 }
 
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
@@ -251,28 +247,116 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
 """
 
 
+def get_app_icon() -> QIcon:
+    """Load assets/anilab.ico from _MEIPASS (frozen) or repository root (dev)."""
+    candidates: list[Path] = []
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            candidates.append(Path(meipass) / "assets" / "anilab.ico")
+        candidates.append(Path(sys.executable).resolve().parent / "assets" / "anilab.ico")
+    # Dev mode: src/anilab_desktop/ui/widgets.py -> anilab_desktop/assets/anilab.ico
+    candidates.append(Path(__file__).resolve().parents[3] / "assets" / "anilab.ico")
+    for path in candidates:
+        if path.is_file():
+            icon = QIcon(str(path))
+            if not icon.isNull():
+                return icon
+    return QIcon()
+
+
+def apply_windows_dwm_style(widget: QWidget) -> None:
+    """Apply Windows 11 DWM dark mode, acrylic backdrop, and rounded corners safely."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        hwnd = int(widget.winId())
+        if not hwnd:
+            return
+        dwmapi = ctypes.windll.dwmapi
+        # DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+        dark = ctypes.c_int(1)
+        dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(dark), ctypes.sizeof(dark))
+        # DWMWA_WINDOW_CORNER_PREFERENCE = 33 (2 = DWMWCP_ROUND)
+        corner = ctypes.c_int(2)
+        dwmapi.DwmSetWindowAttribute(hwnd, 33, ctypes.byref(corner), ctypes.sizeof(corner))
+        # DWMWA_SYSTEMBACKDROP_TYPE = 38 (3 = DWMSBT_TRANSIENTWINDOW / Acrylic)
+        backdrop = ctypes.c_int(3)
+        dwmapi.DwmSetWindowAttribute(hwnd, 38, ctypes.byref(backdrop), ctypes.sizeof(backdrop))
+    except Exception:
+        pass
+
+
+def build_ambient_backdrop(size: QSize) -> QPixmap:
+    """Render a deep-space radial/mesh gradient backdrop into a cached QPixmap."""
+    w = max(1, size.width())
+    h = max(1, size.height())
+    pix = QPixmap(w, h)
+    pix.fill(QColor("#070911"))
+
+    painter = QPainter(pix)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+    # Top-left soft violet/indigo ambient glow
+    g1 = QRadialGradient(w * 0.16, h * 0.14, max(w, h) * 0.65)
+    g1.setColorAt(0.0, QColor(99, 60, 195, 78))
+    g1.setColorAt(0.55, QColor(45, 32, 110, 32))
+    g1.setColorAt(1.0, QColor(7, 9, 17, 0))
+    painter.fillRect(0, 0, w, h, g1)
+
+    # Bottom-right deep cyan/indigo ambient glow
+    g2 = QRadialGradient(w * 0.85, h * 0.84, max(w, h) * 0.60)
+    g2.setColorAt(0.0, QColor(28, 100, 165, 62))
+    g2.setColorAt(0.55, QColor(18, 45, 92, 26))
+    g2.setColorAt(1.0, QColor(7, 9, 17, 0))
+    painter.fillRect(0, 0, w, h, g2)
+
+    # Subtle center-top specular wash
+    g3 = QRadialGradient(w * 0.50, 0.0, max(w, h) * 0.45)
+    g3.setColorAt(0.0, QColor(168, 130, 255, 28))
+    g3.setColorAt(1.0, QColor(7, 9, 17, 0))
+    painter.fillRect(0, 0, w, h, g3)
+
+    painter.end()
+    return pix
+
+
 def apply_glass_shadow(
     widget: QWidget, *, blur: int = 24, alpha: int = 115
-) -> QGraphicsDropShadowEffect:
-    effect = QGraphicsDropShadowEffect(widget)
-    effect.setBlurRadius(blur)
-    effect.setOffset(0, 6)
-    effect.setColor(QColor(0, 0, 0, alpha))
-    widget.setGraphicsEffect(effect)
-    return effect
+) -> None:
+    """Kept for API compatibility; avoids expensive QGraphicsDropShadowEffect CPU repaints."""
+    _ = (widget, blur, alpha)
+    return None
 
 
 class SmoothScrollArea(QScrollArea):
-    """QScrollArea with QPropertyAnimation + OutCubic wheel scrolling."""
+    """QScrollArea with 60fps OutCubic wheel interpolation and debounced resize relayout."""
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.verticalScrollBar().setSingleStep(20)
         self._anim = QPropertyAnimation(self.verticalScrollBar(), b"value", self)
-        self._anim.setDuration(220)
+        self._anim.setDuration(180)
         self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._target_value = 0
+
+        self._relayout_timer = QTimer(self)
+        self._relayout_timer.setSingleShot(True)
+        self._relayout_timer.setInterval(20)
+        self._relayout_timer.timeout.connect(self._flush_relayout)
+
+    def _flush_relayout(self) -> None:
+        w = self.widget()
+        if w is not None and w.layout() is not None:
+            w.layout().activate()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._relayout_timer.start()
 
     def wheelEvent(self, event) -> None:
         bar = self.verticalScrollBar()
@@ -280,7 +364,7 @@ class SmoothScrollArea(QScrollArea):
         if delta == 0:
             super().wheelEvent(event)
             return
-        step = int(-delta * 0.9)
+        step = int(-delta * 0.95)
         base = (
             self._target_value
             if self._anim.state() == QPropertyAnimation.State.Running
@@ -296,16 +380,19 @@ class SmoothScrollArea(QScrollArea):
 
 
 class FlowLayout(QLayout):
-    """Responsive wrapping layout for AnimeCard grids."""
+    """Responsive wrapping layout for AnimeCard grids with geometry caching."""
 
-    def __init__(self, parent=None, margin: int = 8, spacing: int = 14) -> None:
+    def __init__(self, parent=None, margin: int = 8, spacing: int = 16) -> None:
         super().__init__(parent)
         self._items: list = []
         self._spacing = spacing
+        self._last_rect = QRect()
+        self._last_count = -1
         self.setContentsMargins(margin, margin, margin, margin)
 
     def addItem(self, item) -> None:
         self._items.append(item)
+        self._last_count = -1
 
     def count(self) -> int:
         return len(self._items)
@@ -317,6 +404,7 @@ class FlowLayout(QLayout):
 
     def takeAt(self, index: int):
         if 0 <= index < len(self._items):
+            self._last_count = -1
             return self._items.pop(index)
         return None
 
@@ -331,6 +419,10 @@ class FlowLayout(QLayout):
 
     def setGeometry(self, rect: QRect) -> None:
         super().setGeometry(rect)
+        if rect == self._last_rect and len(self._items) == self._last_count:
+            return
+        self._last_rect = QRect(rect)
+        self._last_count = len(self._items)
         self._do_layout(rect, test_only=False)
 
     def sizeHint(self) -> QSize:
@@ -367,11 +459,12 @@ class FlowLayout(QLayout):
 
 
 class PosterLoader:
-    """Async QNetworkAccessManager image loader with in-memory QPixmap cache."""
+    """Async QNetworkAccessManager image loader with raw + rounded QPixmap cache."""
 
     def __init__(self, parent=None) -> None:
         self._nam = QNetworkAccessManager(parent)
         self._cache: dict[str, QPixmap] = {}
+        self._rounded_cache: dict[tuple[str, int, int, int], QPixmap] = {}
         self._pending: dict[str, list[Callable[[QPixmap], None]]] = {}
 
     def load(self, url: str | None, callback: Callable[[QPixmap], None]) -> None:
@@ -389,6 +482,29 @@ class PosterLoader:
         reply = self._nam.get(req)
         reply.finished.connect(lambda r=reply, u=url: self._on_finished(r, u))
 
+    def load_rounded(
+        self,
+        url: str | None,
+        target_size: QSize,
+        radius: int,
+        callback: Callable[[QPixmap], None],
+    ) -> None:
+        if not url:
+            return
+        key = (url, target_size.width(), target_size.height(), radius)
+        if key in self._rounded_cache:
+            callback(self._rounded_cache[key])
+            return
+
+        def _on_raw(pix: QPixmap) -> None:
+            rounded = self._rounded_cache.get(key)
+            if rounded is None:
+                rounded = rounded_pixmap(pix, target_size, radius=radius)
+                self._rounded_cache[key] = rounded
+            callback(rounded)
+
+        self.load(url, _on_raw)
+
     def _on_finished(self, reply: QNetworkReply, url: str) -> None:
         callbacks = self._pending.pop(url, [])
         try:
@@ -402,8 +518,8 @@ class PosterLoader:
             reply.deleteLater()
 
 
-def rounded_pixmap(pix: QPixmap, target_size: QSize, radius: int = 10) -> QPixmap:
-    """Scale-crop pixmap to target_size with rounded corners."""
+def rounded_pixmap(pix: QPixmap, target_size: QSize, radius: int = 12) -> QPixmap:
+    """Scale-crop pixmap to target_size with anti-aliased rounded corners."""
     scaled = pix.scaled(
         target_size,
         Qt.AspectRatioMode.KeepAspectRatioByExpanding,
@@ -417,6 +533,7 @@ def rounded_pixmap(pix: QPixmap, target_size: QSize, radius: int = 10) -> QPixma
     out.fill(Qt.GlobalColor.transparent)
     painter = QPainter(out)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
     path = QPainterPath()
     path.addRoundedRect(0, 0, target_size.width(), target_size.height(), radius, radius)
     painter.setClipPath(path)
@@ -425,21 +542,59 @@ def rounded_pixmap(pix: QPixmap, target_size: QSize, radius: int = 10) -> QPixma
     return out
 
 
+def _elide_two_lines(text: str, font: QFont, max_width: int) -> str:
+    """Wrap text cleanly into at most 2 lines with QFontMetrics.elidedText."""
+    fm = QFontMetrics(font)
+    clean = " ".join(text.split())
+    if not clean:
+        return ""
+    if fm.horizontalAdvance(clean) <= max_width:
+        return clean
+
+    words = clean.split(" ")
+    line1 = ""
+    idx = 0
+    for i, word in enumerate(words):
+        cand = word if not line1 else f"{line1} {word}"
+        if fm.horizontalAdvance(cand) <= max_width:
+            line1 = cand
+            idx = i + 1
+        else:
+            break
+
+    if not line1:
+        # Single long word without spaces
+        first = fm.elidedText(clean, Qt.TextElideMode.ElideNone, max_width)
+        rest = clean[len(first):].strip()
+        if not rest:
+            return first
+        line2 = fm.elidedText(rest, Qt.TextElideMode.ElideRight, max_width)
+        return f"{first}\n{line2}"
+
+    remaining = " ".join(words[idx:]).strip()
+    if not remaining:
+        return line1
+    line2 = fm.elidedText(remaining, Qt.TextElideMode.ElideRight, max_width)
+    return f"{line1}\n{line2}"
+
+
 class AnimeCard(QFrame):
-    """Animated glass anime card with poster artwork, badges, and hover glow."""
+    """60fps frosted-glass anime card with cached rounded poster, 2-line elided title, and pills."""
 
     clicked = Signal(int)
 
-    CARD_W = 188
-    CARD_H = 324
-    POSTER_W = 166
-    POSTER_H = 228
+    CARD_W = 192
+    CARD_H = 342
+    POSTER_W = 170
+    POSTER_H = 236
 
     def __init__(
         self,
         item: AnimeSummary,
         poster_loader: PosterLoader | None = None,
         parent=None,
+        *,
+        last_watched: str | None = None,
     ) -> None:
         super().__init__(parent)
         self._anime_id = item.id
@@ -449,12 +604,6 @@ class AnimeCard(QFrame):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
 
-        self._shadow = apply_glass_shadow(self, blur=16, alpha=110)
-
-        self._blur_anim = QPropertyAnimation(self._shadow, b"blurRadius", self)
-        self._blur_anim.setDuration(160)
-        self._blur_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-
         layout = QVBoxLayout(self)
         layout.setContentsMargins(11, 11, 11, 11)
         layout.setSpacing(7)
@@ -463,19 +612,28 @@ class AnimeCard(QFrame):
         self._poster.setFixedSize(self.POSTER_W, self.POSTER_H)
         self._poster.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._poster.setStyleSheet(
-            "background-color: rgba(255,255,255,0.05); "
+            "background-color: rgba(255, 255, 255, 0.05); "
             "border-radius: 12px; color: #6b7280; font-size: 11px;"
         )
         layout.addWidget(self._poster)
 
-        title_lbl = QLabel(item.title)
-        title_lbl.setWordWrap(True)
-        title_lbl.setMaximumHeight(38)
-        title_lbl.setStyleSheet("font-weight: 700; font-size: 12.5px; color: #f9fafb;")
+        title_font = QFont(self.font())
+        title_font.setPointSizeF(9.5)
+        title_font.setWeight(QFont.Weight.Bold)
+        elided_title = _elide_two_lines(item.title, title_font, self.POSTER_W - 2)
+        title_lbl = QLabel(elided_title)
+        title_lbl.setFont(title_font)
+        title_lbl.setToolTip(item.title)
+        title_lbl.setFixedHeight(38)
+        title_lbl.setAlignment(
+            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft
+        )
+        title_lbl.setStyleSheet("color: #f9fafb; background: transparent;")
         layout.addWidget(title_lbl)
 
         badges = QHBoxLayout()
         badges.setSpacing(4)
+        badges.setContentsMargins(0, 0, 0, 0)
         if item.score:
             sb = QLabel(f"★ {item.score}")
             sb.setObjectName("ScoreBadge")
@@ -488,39 +646,36 @@ class AnimeCard(QFrame):
             eb = QLabel(f"Ep {item.latestEpisode}")
             eb.setObjectName("Badge")
             badges.addWidget(eb)
+        if last_watched:
+            wb = QLabel(f"● {last_watched}")
+            wb.setObjectName("WatchedBadge")
+            badges.addWidget(wb)
         badges.addStretch()
         layout.addLayout(badges)
 
         poster_url = item.posterUrl or item.largePosterUrl
         if poster_loader is not None and poster_url:
-            poster_loader.load(poster_url, self._set_poster)
+            poster_loader.load_rounded(
+                poster_url,
+                QSize(self.POSTER_W, self.POSTER_H),
+                12,
+                self._set_poster,
+            )
 
     def _set_poster(self, pix: QPixmap) -> None:
         self._poster.setText("")
-        self._poster.setPixmap(
-            rounded_pixmap(pix, QSize(self.POSTER_W, self.POSTER_H), radius=12)
-        )
+        self._poster.setPixmap(pix)
 
     def enterEvent(self, event) -> None:
         self.setProperty("hovered", True)
         self.style().unpolish(self)
         self.style().polish(self)
-        self._shadow.setColor(QColor(139, 92, 246, 155))
-        self._blur_anim.stop()
-        self._blur_anim.setStartValue(self._shadow.blurRadius())
-        self._blur_anim.setEndValue(30)
-        self._blur_anim.start()
         super().enterEvent(event)
 
     def leaveEvent(self, event) -> None:
         self.setProperty("hovered", False)
         self.style().unpolish(self)
         self.style().polish(self)
-        self._shadow.setColor(QColor(0, 0, 0, 110))
-        self._blur_anim.stop()
-        self._blur_anim.setStartValue(self._shadow.blurRadius())
-        self._blur_anim.setEndValue(16)
-        self._blur_anim.start()
         super().leaveEvent(event)
 
     def mousePressEvent(self, event) -> None:
